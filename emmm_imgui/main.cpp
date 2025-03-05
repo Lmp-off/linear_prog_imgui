@@ -9,6 +9,7 @@
 // This is provided for completeness, however it is strongly recommended you use OpenGL with SDL or GLFW.
 
 #include "imgui.h"
+#include "vector"
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_win32.h"
 #ifndef WIN32_LEAN_AND_MEAN
@@ -17,6 +18,7 @@
 #include <windows.h>
 #include <GL/GL.h>
 #include <tchar.h>
+#include <algorithm>
 
 #include <implot.h>
 #include <cmath>
@@ -62,8 +64,9 @@ int main(int, char**)
     wglMakeCurrent(g_MainWindow.hDC, g_hRC);
 
     // Show the window
-    ::ShowWindow(hwnd, SW_SHOWDEFAULT);
+    ::ShowWindow(hwnd, SW_SHOWMAXIMIZED);
     ::UpdateWindow(hwnd);
+
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
@@ -74,7 +77,8 @@ int main(int, char**)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;    // Enable Gamepad Controls
 
     // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
+    ImGui::StyleColorsLight();
+    ImGui::PopStyleVar(2);
     //ImGui::StyleColorsClassic();
 
     // Setup Platform/Renderer backends
@@ -88,6 +92,7 @@ int main(int, char**)
 
     // Main loop
     bool done = false;
+    int value = 0;
     while (!done)
     {
         // Poll and handle messages (inputs, window resize, etc.)
@@ -111,32 +116,17 @@ int main(int, char**)
         // Start the Dear ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
 
-        //// Create a simple window
-        //{
-        //    static char text[1024] = "Hello, world!";
-        //    ImGui::Begin("Dear ImGui Example");
-        //    ImGui::Text("This is some useful text.");
-        //    ImGui::InputTextMultiline("Text", text, IM_ARRAYSIZE(text));
-        //    if (ImGui::Button("Save")) {
-        //        // Save button action
-        //    }
-        //    ImGui::End();
-        //}
+        ImGui::NewFrame();
+        
+        // Устанавливаем позицию окна в (0, 0) (использовать при параметре SW_SHOWDEFAULT)
+        //ImGui::SetNextWindowPos(ImVec2(0, 0));
 
         // Create a window with an ImPlot sine graph
         {
-            ImGui::Begin("ImPlot Sine Graph", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove);
 
-            // Generate sine wave data
-            static const int numPoints = 100;
-            static float xs[numPoints], ys[numPoints];
-            for (int i = 0; i < numPoints; ++i)
-            {
-                xs[i] = i * 0.1f; // X values (time)
-                ys[i] = sinf(xs[i]); // Y values (sine of time)
-            }
+            ImGui::Begin("ImPlot Sine Graph", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove);
+            // Устанавливаем позицию окна в (0, 0)
 
             ImVec2 windowSize = ImGui::GetIO().DisplaySize;
 
@@ -144,13 +134,42 @@ int main(int, char**)
             ImGui::SetNextWindowSize(viewport->WorkPos);
             ImGui::SetNextWindowPos(viewport->WorkSize);
 
+            // Устанавливаем цвет для сетки по оси Y (например, синий)
+            ImPlot::PushStyleColor(ImPlotCol_AxisGrid, IM_COL32(0, 0, 0, 255)); // Синий
+
+            //Устанавливаем ширину линий
+            ImPlot::PushStyleVar(ImPlotStyleVar_LineWeight, 2.5f);
+
             // Plot the sine wave
             if (ImPlot::BeginPlot("Sine Wave", "Time", "Amplitude", ImVec2(windowSize.x, windowSize.y), ImPlotFlags_NoTitle))
             {
-                ImPlot::PlotLine("sin(x)", xs, ys, numPoints);
+                // !! лимиты устанавливаются 1 раз если не установлен флаг ImPlotCond_Always
+                ImPlot::SetupAxisLimits(ImAxis_Y1, -30, 30);
+                ImPlot::SetupAxisLimits(ImAxis_X1, -30, 30);
+
+                ImPlotRect rect = ImPlot::GetPlotLimits();
+
+                double xmn = rect.X.Min, xmx = rect.X.Max;
+
+                ImPlot::SetupAxisLimits(ImAxis_X1,xmn+0.01f,xmx+0.01f,ImPlotCond_Always);
+
+                std::vector<float> xValues;
+                std::vector<float> yValues;
+
+                double mdl = (xmn + (xmx - xmn) / 2);
+                for (int i = 0; i < 5000; ++i) {
+                    xValues.push_back(mdl + i * 0.001f);
+                    xValues.push_back(mdl - i * 0.001f);
+                }
+                std::sort(xValues.begin(), xValues.end());
+                for (int i = 0; i < xValues.size(); i++)
+                {
+                    yValues.push_back(sinf(xValues[i]));
+                }
+
+                ImPlot::PlotLine("sin(x)", xValues.data(), yValues.data(), xValues.size());
                 ImPlot::EndPlot();
             }
-
             ImGui::End();
         }
 
@@ -163,6 +182,7 @@ int main(int, char**)
 
         // Present
         ::SwapBuffers(g_MainWindow.hDC);
+        value = (value + 1) % 10000;
     }
 
     ImGui_ImplOpenGL3_Shutdown();
