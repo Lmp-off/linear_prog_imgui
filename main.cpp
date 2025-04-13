@@ -25,7 +25,7 @@ struct ScrollState {
     std::vector<PointF> points;
 };
 
-const int BUTTON_AREA_WIDTH = 220;
+const int BUTTON_AREA_WIDTH = 400;
 const float INITIAL_SCALE = 50.0f;
 const float ZOOM_FACTOR = 1.2f;
 const int GRID_STEP = 5;
@@ -35,7 +35,7 @@ float ScreenToWorldX(int x, float offsetX, float scale) {
 }
 
 float ScreenToWorldY(int y, float offsetY, float scale) {
-    return (y - offsetY) / scale;
+    return (offsetY - y) / scale;
 }
 
 int WorldToScreenX(float worldX, float offsetX, float scale) {
@@ -43,7 +43,7 @@ int WorldToScreenX(float worldX, float offsetX, float scale) {
 }
 
 int WorldToScreenY(float worldY, float offsetY, float scale) {
-    return static_cast<int>(worldY * scale + offsetY);
+    return static_cast<int>(offsetY - worldY * scale);
 }
 
 void DrawInfiniteGrid(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
@@ -65,10 +65,11 @@ void DrawInfiniteGrid(Graphics& graphics, float offsetX, float offsetY, float sc
     }
 
     // Horizontal grid lines
-    float startY = floor(top / GRID_STEP) * GRID_STEP;
-    float endY = ceil(bottom / GRID_STEP) * GRID_STEP;
+    float startY = floor(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
+    float endY = ceil(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
+
     for (float y = startY; y <= endY; y += GRID_STEP) {
-        int screenY = static_cast<int>(y * scale + offsetY);
+        int screenY = WorldToScreenY(y, offsetY, scale);
         graphics.DrawLine(&gridPen, BUTTON_AREA_WIDTH, screenY, plotArea.right, screenY);
     }
 }
@@ -95,21 +96,24 @@ void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float 
     float xEnd = ceil(ScreenToWorldX(plotArea.right, offsetX, scale) / GRID_STEP) * GRID_STEP;
     for (float x = xStart; x <= xEnd; x += GRID_STEP) {
         if (x == 0) continue;
+
         int labelX = BUTTON_AREA_WIDTH + static_cast<int>(x * scale + offsetX);
+
         std::wstring text = std::to_wstring(static_cast<int>(x));
         graphics.DrawString(text.c_str(), -1, &font,
             PointF(labelX, screenY + 15), &textBrush);
     }
 
     // Y labels
-    float yStart = floor(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
-    float yEnd = ceil(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
+    float yStart = floor(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
+    float yEnd = ceil(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
+
     for (float y = yStart; y <= yEnd; y += GRID_STEP) {
         if (y == 0) continue;
-        int labelY = static_cast<int>(y * scale + offsetY);
-        std::wstring text = std::to_wstring(static_cast<int>(-y));
+        int labelY = WorldToScreenY(y, offsetY, scale);
+        std::wstring text = std::to_wstring(static_cast<int>(y));  // Прямое отображение значения
         graphics.DrawString(text.c_str(), -1, &font,
-            PointF(screenX + 15, labelY), &textBrush);
+            PointF(screenX + 15, labelY - 7), &textBrush);  // Смещение для центрирования
     }
 
     // Origin label
