@@ -5,6 +5,7 @@
 #include <sstream>
 #include <vector>
 #include <algorithm>
+#include <iostream>
 #pragma comment (lib, "Gdiplus.lib")
 
 #ifndef GET_X_LPARAM
@@ -25,17 +26,25 @@ struct ScrollState {
     std::vector<PointF> points;
 };
 
-const int BUTTON_AREA_WIDTH = 220;
+struct Condition {
+    double a, b, c;
+
+    Condition(double a_, double b_, double c_) : a(a_), b(b_), c(c_) {}
+};
+
+const int BUTTON_AREA_WIDTH = 400;
 const float INITIAL_SCALE = 50.0f;
 const float ZOOM_FACTOR = 1.2f;
 const int GRID_STEP = 5;
+
+std::vector<Condition> conditions;
 
 float ScreenToWorldX(int x, float offsetX, float scale) {
     return (x - BUTTON_AREA_WIDTH - offsetX) / scale;
 }
 
 float ScreenToWorldY(int y, float offsetY, float scale) {
-    return (y - offsetY) / scale;
+    return (offsetY - y) / scale;
 }
 
 int WorldToScreenX(float worldX, float offsetX, float scale) {
@@ -43,7 +52,24 @@ int WorldToScreenX(float worldX, float offsetX, float scale) {
 }
 
 int WorldToScreenY(float worldY, float offsetY, float scale) {
-    return static_cast<int>(worldY * scale + offsetY);
+    return static_cast<int>(offsetY - worldY * scale);
+}
+
+std::pair<double, double> findIntersection(const Condition& c1, const Condition& c2) {
+    double denom = c1.a * c2.b - c2.a * c1.b;
+    if (fabs(denom) < 1e-9) return { std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity() };
+
+    double x = (c1.c * c2.b - c2.c * c1.b) / denom;
+    double y = (c2.c * c1.a - c1.c * c2.a) / denom;
+    return { x, y };
+}
+
+bool isFeasible(double x, double y) {
+    const double EPS = 1e-9;
+    for (const auto& c : conditions) {
+        if (c.a * x + c.b * y > c.c + EPS) return false;
+    }
+    return true;
 }
 
 void DrawInfiniteGrid(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
@@ -65,10 +91,11 @@ void DrawInfiniteGrid(Graphics& graphics, float offsetX, float offsetY, float sc
     }
 
     // Horizontal grid lines
-    float startY = floor(top / GRID_STEP) * GRID_STEP;
-    float endY = ceil(bottom / GRID_STEP) * GRID_STEP;
+    float startY = floor(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
+    float endY = ceil(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
+
     for (float y = startY; y <= endY; y += GRID_STEP) {
-        int screenY = static_cast<int>(y * scale + offsetY);
+        int screenY = WorldToScreenY(y, offsetY, scale);
         graphics.DrawLine(&gridPen, BUTTON_AREA_WIDTH, screenY, plotArea.right, screenY);
     }
 }
@@ -95,21 +122,24 @@ void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float 
     float xEnd = ceil(ScreenToWorldX(plotArea.right, offsetX, scale) / GRID_STEP) * GRID_STEP;
     for (float x = xStart; x <= xEnd; x += GRID_STEP) {
         if (x == 0) continue;
+
         int labelX = BUTTON_AREA_WIDTH + static_cast<int>(x * scale + offsetX);
+
         std::wstring text = std::to_wstring(static_cast<int>(x));
         graphics.DrawString(text.c_str(), -1, &font,
             PointF(labelX, screenY + 15), &textBrush);
     }
 
     // Y labels
-    float yStart = floor(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
-    float yEnd = ceil(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
+    float yStart = floor(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
+    float yEnd = ceil(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
+
     for (float y = yStart; y <= yEnd; y += GRID_STEP) {
         if (y == 0) continue;
-        int labelY = static_cast<int>(y * scale + offsetY);
-        std::wstring text = std::to_wstring(static_cast<int>(-y));
+        int labelY = WorldToScreenY(y, offsetY, scale);
+        std::wstring text = std::to_wstring(static_cast<int>(y));  // Прямое отображение значения
         graphics.DrawString(text.c_str(), -1, &font,
-            PointF(screenX + 15, labelY), &textBrush);
+            PointF(screenX + 15, labelY - 7), &textBrush);  // Смещение для центрирования
     }
 
     // Origin label
@@ -266,16 +296,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         int plotWidth = clientRect.right - BUTTON_AREA_WIDTH;
 
         switch (LOWORD(wParam)) {
-        case 1: {
+        case 1: { // Button Draw
             scroll.points.clear();
             wchar_t text[32];
             for (int i = 0; i < 6; i++) {
-                float x = 0, y = 0;
+                float x, y;
                 GetWindowTextW(hEditX[i], text, 32);
                 x = _wtof(text);
+
+                // replace text with the received one 
+                _itow_s(x, text, 10);
+                SetWindowTextW(hEditX[i], text);
+
                 GetWindowTextW(hEditY[i], text, 32);
                 y = _wtof(text);
-                scroll.points.emplace_back(x, y); // Remove Y inversion
+                
+                _itow_s(y, text, 10);
+                SetWindowTextW(hEditY[i], text);
+
+                scroll.points.emplace_back(x, y);
             }
             break;
         }
@@ -291,6 +330,62 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         case 4:
             scroll.scale /= ZOOM_FACTOR;
+            break;
+        case 5: // ax + bx < c
+            conditions.clear();
+            wchar_t text[32];
+            for (int i = 0; i < 10; i++)
+            {
+                double a, b, c;
+
+                GetWindowTextW(NULL,text,32);
+                a = _wtoi(text);
+                GetWindowTextW(NULL,text,32);
+                b = _wtoi(text);
+                GetWindowTextW(NULL,text,32);
+                c = _wtoi(text);
+                
+                conditions.emplace_back(a,b,c);
+            }
+            std::vector<std::pair<double, double>> vertices;
+
+            for (int i = 0; i < 10; ++i) {
+                for (int j = i + 1; j < 10; ++j) {
+                    auto [x, y] = findIntersection(conditions[i], conditions[j]);
+                    if (!isinf(x) && isFeasible(x, y)) {
+                        vertices.emplace_back(x, y);
+                    }
+                }
+            }
+
+            if (vertices.empty()) { // or less then 3 if x>0 and y>0
+                std::cout << "Допустимых решений нет.\n";
+                return 0;
+            }
+
+            double maxVal = -std::numeric_limits<double>::infinity();
+            double minVal = std::numeric_limits<double>::infinity();
+            std::pair<double, double> maxPoint, minPoint;
+
+            for (const auto& [x, y] : vertices) {
+                // F = Ax + By -> max/min
+                double current = A * x + B * y;
+                if (current > maxVal) {
+                    maxVal = current;
+                    maxPoint = { x, y };
+                }
+                if (current < minVal) {
+                    minVal = current;
+                    minPoint = { x, y };
+                }
+            }
+
+
+
+            //....
+
+
+
             break;
         }
         InvalidateRect(hwnd, NULL, TRUE);
@@ -357,26 +452,6 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         DrawInfiniteGrid(graphics, scroll.offsetX, scroll.offsetY, scroll.scale, plotArea);
         DrawAxesWithLabels(graphics, scroll.offsetX, scroll.offsetY, scroll.scale, plotArea);
-
-        // if (scroll.points.size() == 6) {
-        //     for (int i = 0; i < 3; i++) {
-        //         const auto& p1 = scroll.points[i * 2];
-        //         const auto& p2 = scroll.points[i * 2 + 1];
-
-        //         float dx = p2.X - p1.X;
-        //         float dy = p2.Y - p1.Y;
-        //         bool isVertical = fabs(dx) < 1e-6;
-        //         float m = 0.0f, b = 0.0f, xVertical = p1.X;
-
-        //         if (!isVertical) {
-        //             m = dy / dx;
-        //             b = p1.Y - m * p1.X;
-        //         }
-
-        //         DrawHatchedRegionForLine(graphics, m, b, isVertical, xVertical,
-        //             scroll.offsetX, scroll.offsetY, scroll.scale, plotArea, true);
-        //     }
-        // }
 
         // draw hatched area
         if (scroll.points.size() == 6) {
