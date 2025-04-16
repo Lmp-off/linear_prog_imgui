@@ -72,6 +72,9 @@ bool isFeasible(double x, double y) {
     return true;
 }
 
+// =======================================================
+// отрисовка сетки
+// =======================================================
 void DrawInfiniteGrid(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
     Pen gridPen(Color(150, 220, 220, 220));
     SolidBrush textBrush(Color(120, 120, 120));
@@ -100,6 +103,9 @@ void DrawInfiniteGrid(Graphics& graphics, float offsetX, float offsetY, float sc
     }
 }
 
+// =======================================================
+// отрисовка осей
+// =======================================================
 void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
     Pen axisPen(Color(255, 0, 0, 0), 2);
     SolidBrush textBrush(Color(0, 0, 0));
@@ -147,6 +153,9 @@ void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float 
         PointF(screenX + 5, screenY + 5), &textBrush);
 }
 
+// =======================================================
+// отрисовка линий
+// =======================================================
 void DrawInfiniteLine(Graphics& graphics, const PointF& p1, const PointF& p2,
     float offsetX, float offsetY, float scale, const RECT& plotArea, Color color) {
     if (p1.X == p2.X && p1.Y == p2.Y) return;
@@ -184,6 +193,9 @@ void DrawInfiniteLine(Graphics& graphics, const PointF& p1, const PointF& p2,
     }
 }
 
+// =======================================================
+// отрисовка пересечения
+// =======================================================
 void DrawHatchedRegionForLine(Graphics& graphics, float m, float b, bool isVertical, float xVertical,
     float offsetX, float offsetY, float scale, const RECT& plotArea, bool isBelow) {
 
@@ -240,12 +252,16 @@ void DrawHatchedRegionForLine(Graphics& graphics, float m, float b, bool isVerti
     graphics.FillPath(&hatchBrush, &path);
 }
 
+// =======================================================
+// обработка событий
+// =======================================================
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     static ScrollState scroll = { {0}, 0.0f, 0.0f, false, INITIAL_SCALE, {} };
     static ULONG_PTR gdiplusToken;
     static HWND hEditX[6], hEditY[6], hButtonDraw, hButtonReset, hButtonZoomIn, hButtonZoomOut;
 
     switch (msg) {
+    // создание окна
     case WM_CREATE: {
         GdiplusStartupInput gdiplusStartupInput;
         GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
@@ -289,7 +305,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     }
-
+    // 
     case WM_COMMAND: {
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
@@ -391,7 +407,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     }
-
+    // нажатие ЛКМ
     case WM_LBUTTONDOWN: {
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         RECT plotArea;
@@ -404,7 +420,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     }
-
+    // перемещение мыши
     case WM_MOUSEMOVE:
         if (scroll.isDragging) {
             int dx = GET_X_LPARAM(lParam) - scroll.dragStart.x;
@@ -419,12 +435,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, NULL, FALSE);
         }
         return 0;
-
+    // отжатие кнопки
     case WM_LBUTTONUP:
         scroll.isDragging = false;
         ReleaseCapture();
         return 0;
-
+    // код отрисовки
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
@@ -595,6 +611,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 }
 
+// =======================================================
+// точка входа
+// =======================================================
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     const wchar_t CLASS_NAME[] = L"PointPlotterClass";
 
