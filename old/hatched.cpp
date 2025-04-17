@@ -1,28 +1,20 @@
 #include <windows.h>
 #include <gdiplus.h>
-
 #include <cmath>
 #include <string>
 #include <sstream>
 #include <vector>
 #include <algorithm>
-#include <iostream>
-
 #pragma comment (lib, "Gdiplus.lib")
+
+#ifndef GET_X_LPARAM
+#define GET_X_LPARAM(lParam) ((int)(short)LOWORD(lParam))
+#endif
+#ifndef GET_Y_LPARAM
+#define GET_Y_LPARAM(lParam) ((int)(short)HIWORD(lParam))
+#endif
+
 using namespace Gdiplus;
-
-// Constants and helper functions
-const int BUTTON_AREA_WIDTH = 400;
-const float INITIAL_SCALE = 50.0f;
-const float ZOOM_FACTOR = 1.2f;
-const int GRID_STEP = 5;
-
-enum ControlID {
-    ID_BUTTON_DRAW = 1,
-    ID_BUTTON_RESET,
-    ID_BUTTON_ZOOMIN,
-    ID_BUTTON_ZOOMOUT
-};
 
 struct ScrollState {
     POINT dragStart;
@@ -33,53 +25,30 @@ struct ScrollState {
     std::vector<PointF> points;
 };
 
-struct Condition {
-    double a, b, c;
-    Condition(double a_, double b_, double c_) : a(a_), b(b_), c(c_) {}
-};
+const int BUTTON_AREA_WIDTH = 220;
+const float INITIAL_SCALE = 50.0f;
+const float ZOOM_FACTOR = 1.2f;
+const int GRID_STEP = 5;
 
-
-// Conversion functions
-float ScreenToWorldX(int x, float offsetX, float scale) { return (x - BUTTON_AREA_WIDTH - offsetX) / scale; }
-float ScreenToWorldY(int y, float offsetY, float scale) { return (offsetY - y) / scale; }
-int WorldToScreenX(float worldX, float offsetX, float scale) { return BUTTON_AREA_WIDTH + static_cast<int>(worldX * scale + offsetX); }
-int WorldToScreenY(float worldY, float offsetY, float scale) { return static_cast<int>(offsetY - worldY * scale); }
-
-// Drawing functions
-void DrawInfiniteGrid(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea);
-void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea);
-void DrawInfiniteLine(Graphics& graphics, const PointF& p1, const PointF& p2, float offsetX, float offsetY, float scale, const RECT& plotArea, Color color);
-void DrawHatchedRegion(Graphics& graphics, const ScrollState& scroll, const RECT& plotArea);
-
-// Helper functions
-void InitializeControls(HWND hwnd, HWND groupLeft);
-void HandleDrawCommand(HWND hwnd, ScrollState& scroll, HWND hEditX[], HWND hEditY[]);
-void HandleResetCommand(const RECT& clientRect, ScrollState& scroll);
-void UpdatePlotArea(HWND hwnd, const RECT& clientRect, ScrollState& scroll);
-
-// Message handler
-LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-
-
-
-std::pair<double, double> findIntersection(const Condition& c1, const Condition& c2) {
-    double denom = c1.a * c2.b - c2.a * c1.b;
-    if (fabs(denom) < 1e-9) return { std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity() };
-
-    double x = (c1.c * c2.b - c2.c * c1.b) / denom;
-    double y = (c2.c * c1.a - c1.c * c2.a) / denom;
-    return { x, y };
+float ScreenToWorldX(int x, float offsetX, float scale) {
+    return (x - BUTTON_AREA_WIDTH - offsetX) / scale;
 }
 
-bool isFeasible(double x, double y) {
-    const double EPS = 1e-9;
-    for (const auto& c : conditions) {
-        if (c.a * x + c.b * y > c.c + EPS) return false;
-    }
-    return true;
+float ScreenToWorldY(int y, float offsetY, float scale) {
+    return (y - offsetY) / scale;
 }
 
+int WorldToScreenX(float worldX, float offsetX, float scale) {
+    return BUTTON_AREA_WIDTH + static_cast<int>(worldX * scale + offsetX);
+}
+
+int WorldToScreenY(float worldY, float offsetY, float scale) {
+    return static_cast<int>(worldY * scale + offsetY);
+}
+
+// =======================================================
+// отрисовка сетки
+// =======================================================
 void DrawInfiniteGrid(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
     Pen gridPen(Color(150, 220, 220, 220));
     SolidBrush textBrush(Color(120, 120, 120));
@@ -99,15 +68,17 @@ void DrawInfiniteGrid(Graphics& graphics, float offsetX, float offsetY, float sc
     }
 
     // Horizontal grid lines
-    float startY = floor(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
-    float endY = ceil(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
-
+    float startY = floor(top / GRID_STEP) * GRID_STEP;
+    float endY = ceil(bottom / GRID_STEP) * GRID_STEP;
     for (float y = startY; y <= endY; y += GRID_STEP) {
-        int screenY = WorldToScreenY(y, offsetY, scale);
+        int screenY = static_cast<int>(y * scale + offsetY);
         graphics.DrawLine(&gridPen, BUTTON_AREA_WIDTH, screenY, plotArea.right, screenY);
     }
 }
 
+// =======================================================
+// отрисовка осей
+// =======================================================
 void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
     Pen axisPen(Color(255, 0, 0, 0), 2);
     SolidBrush textBrush(Color(0, 0, 0));
@@ -130,24 +101,21 @@ void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float 
     float xEnd = ceil(ScreenToWorldX(plotArea.right, offsetX, scale) / GRID_STEP) * GRID_STEP;
     for (float x = xStart; x <= xEnd; x += GRID_STEP) {
         if (x == 0) continue;
-
         int labelX = BUTTON_AREA_WIDTH + static_cast<int>(x * scale + offsetX);
-
         std::wstring text = std::to_wstring(static_cast<int>(x));
         graphics.DrawString(text.c_str(), -1, &font,
             PointF(labelX, screenY + 15), &textBrush);
     }
 
     // Y labels
-    float yStart = floor(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
-    float yEnd = ceil(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
-
+    float yStart = floor(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
+    float yEnd = ceil(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
     for (float y = yStart; y <= yEnd; y += GRID_STEP) {
         if (y == 0) continue;
-        int labelY = WorldToScreenY(y, offsetY, scale);
-        std::wstring text = std::to_wstring(static_cast<int>(y));  // Прямое отображение значения
+        int labelY = static_cast<int>(y * scale + offsetY);
+        std::wstring text = std::to_wstring(static_cast<int>(-y));
         graphics.DrawString(text.c_str(), -1, &font,
-            PointF(screenX + 15, labelY - 7), &textBrush);  // Смещение для центрирования
+            PointF(screenX + 15, labelY), &textBrush);
     }
 
     // Origin label
@@ -155,6 +123,9 @@ void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float 
         PointF(screenX + 5, screenY + 5), &textBrush);
 }
 
+// =======================================================
+// отрисовка линий
+// =======================================================
 void DrawInfiniteLine(Graphics& graphics, const PointF& p1, const PointF& p2,
     float offsetX, float offsetY, float scale, const RECT& plotArea, Color color) {
     if (p1.X == p2.X && p1.Y == p2.Y) return;
@@ -192,6 +163,9 @@ void DrawInfiniteLine(Graphics& graphics, const PointF& p1, const PointF& p2,
     }
 }
 
+// =======================================================
+// отрисовка пересечения
+// =======================================================
 void DrawHatchedRegionForLine(Graphics& graphics, float m, float b, bool isVertical, float xVertical,
     float offsetX, float offsetY, float scale, const RECT& plotArea, bool isBelow) {
 
@@ -248,12 +222,16 @@ void DrawHatchedRegionForLine(Graphics& graphics, float m, float b, bool isVerti
     graphics.FillPath(&hatchBrush, &path);
 }
 
+// =======================================================
+// обработка событий
+// =======================================================
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     static ScrollState scroll = { {0}, 0.0f, 0.0f, false, INITIAL_SCALE, {} };
     static ULONG_PTR gdiplusToken;
     static HWND hEditX[6], hEditY[6], hButtonDraw, hButtonReset, hButtonZoomIn, hButtonZoomOut;
 
     switch (msg) {
+    // создание окна
     case WM_CREATE: {
         GdiplusStartupInput gdiplusStartupInput;
         GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
@@ -297,32 +275,23 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     }
-
+    // 
     case WM_COMMAND: {
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
         int plotWidth = clientRect.right - BUTTON_AREA_WIDTH;
 
         switch (LOWORD(wParam)) {
-        case 1: { // Button Draw
+        case 1: {
             scroll.points.clear();
             wchar_t text[32];
             for (int i = 0; i < 6; i++) {
-                float x, y;
+                float x = 0, y = 0;
                 GetWindowTextW(hEditX[i], text, 32);
                 x = _wtof(text);
-
-                // replace text with the received one 
-                _itow_s(x, text, 10);
-                SetWindowTextW(hEditX[i], text);
-
                 GetWindowTextW(hEditY[i], text, 32);
                 y = _wtof(text);
-                
-                _itow_s(y, text, 10);
-                SetWindowTextW(hEditY[i], text);
-
-                scroll.points.emplace_back(x, y);
+                scroll.points.emplace_back(x, y); // Remove Y inversion
             }
             break;
         }
@@ -339,67 +308,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case 4:
             scroll.scale /= ZOOM_FACTOR;
             break;
-        case 5: // ax + bx < c
-            conditions.clear();
-            wchar_t text[32];
-            for (int i = 0; i < 10; i++)
-            {
-                double a, b, c;
-
-                GetWindowTextW(NULL,text,32);
-                a = _wtoi(text);
-                GetWindowTextW(NULL,text,32);
-                b = _wtoi(text);
-                GetWindowTextW(NULL,text,32);
-                c = _wtoi(text);
-                
-                conditions.emplace_back(a,b,c);
-            }
-            std::vector<std::pair<double, double>> vertices;
-
-            for (int i = 0; i < 10; ++i) {
-                for (int j = i + 1; j < 10; ++j) {
-                    auto [x, y] = findIntersection(conditions[i], conditions[j]);
-                    if (!isinf(x) && isFeasible(x, y)) {
-                        vertices.emplace_back(x, y);
-                    }
-                }
-            }
-
-            if (vertices.empty()) { // or less then 3 if x>0 and y>0
-                std::cout << "Допустимых решений нет.\n";
-                return 0;
-            }
-
-            double maxVal = -std::numeric_limits<double>::infinity();
-            double minVal = std::numeric_limits<double>::infinity();
-            std::pair<double, double> maxPoint, minPoint;
-
-            for (const auto& [x, y] : vertices) {
-                // F = Ax + By -> max/min
-                double current = A * x + B * y;
-                if (current > maxVal) {
-                    maxVal = current;
-                    maxPoint = { x, y };
-                }
-                if (current < minVal) {
-                    minVal = current;
-                    minPoint = { x, y };
-                }
-            }
-
-
-
-            //....
-
-
-
-            break;
         }
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     }
-
+    // нажатие ЛКМ
     case WM_LBUTTONDOWN: {
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         RECT plotArea;
@@ -412,7 +325,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     }
-
+    // перемещение мыши
     case WM_MOUSEMOVE:
         if (scroll.isDragging) {
             int dx = GET_X_LPARAM(lParam) - scroll.dragStart.x;
@@ -427,12 +340,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, NULL, FALSE);
         }
         return 0;
-
+    // отжатие кнопки
     case WM_LBUTTONUP:
         scroll.isDragging = false;
         ReleaseCapture();
         return 0;
-
+    // код отрисовки
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
@@ -460,6 +373,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         DrawInfiniteGrid(graphics, scroll.offsetX, scroll.offsetY, scroll.scale, plotArea);
         DrawAxesWithLabels(graphics, scroll.offsetX, scroll.offsetY, scroll.scale, plotArea);
+
+        // if (scroll.points.size() == 6) {
+        //     for (int i = 0; i < 3; i++) {
+        //         const auto& p1 = scroll.points[i * 2];
+        //         const auto& p2 = scroll.points[i * 2 + 1];
+
+        //         float dx = p2.X - p1.X;
+        //         float dy = p2.Y - p1.Y;
+        //         bool isVertical = fabs(dx) < 1e-6;
+        //         float m = 0.0f, b = 0.0f, xVertical = p1.X;
+
+        //         if (!isVertical) {
+        //             m = dy / dx;
+        //             b = p1.Y - m * p1.X;
+        //         }
+
+        //         DrawHatchedRegionForLine(graphics, m, b, isVertical, xVertical,
+        //             scroll.offsetX, scroll.offsetY, scroll.scale, plotArea, true);
+        //     }
+        // }
 
         // draw hatched area
         if (scroll.points.size() == 6) {
@@ -603,6 +536,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     }
 }
 
+// =======================================================
+// точка входа
+// =======================================================
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     const wchar_t CLASS_NAME[] = L"PointPlotterClass";
 
