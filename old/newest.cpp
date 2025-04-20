@@ -27,13 +27,18 @@ using namespace Gdiplus;
 const int BUTTON_AREA_WIDTH = 400;
 const float INITIAL_SCALE = 50.0f;
 const float ZOOM_FACTOR = 1.2f;
-const int GRID_STEP = 5;
+const int GRID_STEP = 1;
 
 // id для определения элемента
 enum ElementId {
     BUTTON_RESET = 1,
     BUTTON_ZOOMIN,
     BUTTON_ZOOMOUT,
+    BUTTON_ADDLINE,
+    BUTTON_REMOVELINE,
+    CONDITIONS_PANEL,
+    POINTS_PANEL,
+
     BUTTON_SIGN
 };
 
@@ -51,9 +56,447 @@ struct PlotState {
     float scale;
 };
 
+static int LINES = 3;
+
 // объявление функций
 void DrawInfiniteGrid(HWND hwnd, Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea);
 void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea);
+
+void DrawLineHatched(HWND hwnd, Graphics& graphics, float x1, float y1, float x2, float y2, PlotState& state);
+void DrawInfiniteLine(Graphics& graphics, const PointF& p1, const PointF& p2, float offsetX, float offsetY, float scale, 
+        const RECT& plotArea);
+
+// =======================================================
+// скролл панели условий
+// =======================================================
+struct ConditionsPanelData {
+    int scrollPos;
+    int totalHeight;
+    std::vector<HWND> childControls;  // Child windows
+    std::vector<int> lineHeights;     // Height of each line
+};
+
+void UpdateScrollInfo(HWND hwnd, ConditionsPanelData* pData) {
+    SCROLLINFO si = { sizeof(SCROLLINFO) };
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    si.nMin = 0;
+    si.nMax = pData->totalHeight;
+    si.nPage = rc.bottom;
+    si.nPos = pData->scrollPos;
+    SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+}
+
+void UpdateTotalHeight(ConditionsPanelData* pData) {
+    int height = pData->lineHeights[LINES+1];
+    pData->totalHeight = height + 30;
+
+    for (int i = 0; i < 10; ++i) {
+        if (i < LINES) continue;
+        else
+            for (int j = 7*i; j < pData->childControls.size(); ++j) {
+                ShowWindow(pData->childControls[j+5], SW_HIDE);
+            }
+    }
+}
+
+// Modified condInit to track control heights
+void condInit(HWND hPanel, ConditionsPanelData* pData) {
+    int yPos = 10;
+    const int lineSpacing = 5;
+
+    // X positions for controls in a line (L=0, Edit1=20, x+=84, Edit2=104, y->max=168)
+    const int xPositions[] = {0, 20, 82, 100, 162, 178, 204};
+    const int widths[] = {20, 60, 20, 60, 20, 20, 60};
+
+    // first row
+    HWND hStatic1 = CreateWindow(L"STATIC", L"L=", WS_VISIBLE | WS_CHILD,
+        xPositions[0], yPos, widths[0], 20, hPanel, NULL, NULL, NULL);
+    
+    HWND hEdit1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+        xPositions[1], yPos, widths[1], 20, hPanel, NULL, NULL, NULL);
+    
+    HWND hStatic2 = CreateWindow(L"STATIC", L"x+", WS_VISIBLE | WS_CHILD,
+        xPositions[2], yPos, widths[2], 20, hPanel, NULL, NULL, NULL);
+    
+    HWND hEdit2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+        xPositions[3], yPos, widths[3], 20, hPanel, NULL, NULL, NULL);
+    
+    HWND hStatic3 = CreateWindow(L"STATIC", L"y -> max", WS_VISIBLE | WS_CHILD,
+        xPositions[4], yPos, widths[6], 20, hPanel, NULL, NULL, NULL);
+    
+    // Store controls and calculate line height
+    int maxHeight = 0;
+    HWND lineControls[] = {hStatic1, hEdit1, hStatic2, hEdit2, hStatic3};
+    
+    for (HWND hCtrl : lineControls) {
+        pData->childControls.push_back(hCtrl);
+        RECT rc;
+        GetWindowRect(hCtrl, &rc);
+        maxHeight = max(maxHeight, rc.bottom - rc.top);
+    }
+
+    pData->lineHeights.push_back(maxHeight);
+
+    // lines
+    for (int lineIdx = 0; lineIdx < 10; ++lineIdx) {
+        int maxHeight = 0;
+        
+        // Create controls for this line
+        std::wstring label = std::to_wstring(lineIdx + 1) + L")";
+        HWND hStatic0 = CreateWindow(L"STATIC", label.c_str(), WS_VISIBLE | WS_CHILD,
+            xPositions[0], yPos, widths[0], 20, hPanel, NULL, NULL, NULL);
+        
+        HWND hEdit1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+            xPositions[1], yPos, widths[1], 20, hPanel, NULL, NULL, NULL);
+        
+        HWND hStatic1 = CreateWindow(L"STATIC", L"x+", WS_VISIBLE | WS_CHILD,
+            xPositions[2], yPos, widths[2], 20, hPanel, NULL, NULL, NULL);
+        
+        HWND hEdit2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+            xPositions[3], yPos, widths[3], 20, hPanel, NULL, NULL, NULL);
+
+        HWND hStatic2 = CreateWindow(L"STATIC", L"y", WS_VISIBLE | WS_CHILD,
+            xPositions[4], yPos, widths[4], 20, hPanel, NULL, NULL, NULL);
+
+        HWND hButton1 = CreateWindow(L"BUTTON", L"<=", WS_VISIBLE | WS_CHILD,
+            xPositions[5], yPos, widths[5], 20, hPanel, (HMENU)(BUTTON_SIGN + lineIdx), NULL, NULL);
+        
+        HWND hEdit3 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+            xPositions[6], yPos, widths[6], 20, hPanel, NULL, NULL, NULL);
+
+        // Store controls and calculate line height
+        HWND lineControls[] = {hStatic0, hEdit1, hStatic1, hEdit2, hStatic2, hButton1, hEdit3};
+        for (HWND hCtrl : lineControls) {
+            pData->childControls.push_back(hCtrl);
+            RECT rc;
+            GetWindowRect(hCtrl, &rc);
+            maxHeight = max(maxHeight, rc.bottom - rc.top);
+        }
+
+        pData->lineHeights.push_back(maxHeight);
+        yPos += maxHeight + lineSpacing;
+    }
+
+    pData->totalHeight = yPos;
+    UpdateScrollInfo(hPanel, pData);
+
+    UpdateTotalHeight(pData);
+}
+
+
+
+void RepositionChildren(HWND hwnd, ConditionsPanelData* pData) {
+    int yPos = 10 - pData->scrollPos;
+    size_t controlIdx = 0;
+
+    int counter = 0;
+
+    for (int lineHeight : pData->lineHeights) {
+        // Process lines
+        for (int i = 0; i < (counter ? 7 : 5); ++i) {
+            if (controlIdx >= pData->childControls.size()) break;
+            HWND hChild = pData->childControls[controlIdx];
+            
+            // Get original X position and width
+            RECT rc;
+            GetWindowRect(hChild, &rc);
+            MapWindowPoints(HWND_DESKTOP, hwnd, (LPPOINT)&rc, 2);
+            
+            SetWindowPos(hChild, NULL, 
+                rc.left,  // Keep original X position
+                yPos,     // Update Y position
+                rc.right - rc.left, 
+                rc.bottom - rc.top,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            
+            controlIdx++;
+        }
+
+        yPos += lineHeight + 5;
+        counter++;
+    }
+}
+
+LRESULT CALLBACK ConditionsPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    ConditionsPanelData* pData = (ConditionsPanelData*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+
+    switch (msg) {
+        case WM_CREATE: {
+            pData = new ConditionsPanelData();
+            pData->scrollPos = 0;
+            pData->totalHeight = 0;
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pData);
+            condInit(hwnd, pData);
+            break;
+        }
+
+        case WM_DESTROY: {
+            if (pData) {
+                delete pData;
+                SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+            }
+            break;
+        }
+
+        case WM_SIZE: {
+            if (pData) {
+                UpdateScrollInfo(hwnd, pData);
+                RepositionChildren(hwnd, pData);
+            }
+            break;
+        }
+
+        case WM_VSCROLL: {
+            if (!pData) break;
+            SCROLLINFO si = { sizeof(SCROLLINFO) };
+            si.fMask = SIF_ALL;
+            GetScrollInfo(hwnd, SB_VERT, &si);
+
+            int oldPos = si.nPos;
+            int newPos = oldPos;
+
+            switch (LOWORD(wParam)) {
+                case SB_LINEUP:        newPos -= 10; break;
+                case SB_LINEDOWN:      newPos += 10; break;
+                case SB_PAGEUP:       newPos -= si.nPage; break;
+                case SB_PAGEDOWN:     newPos += si.nPage; break;
+                case SB_THUMBTRACK:   newPos = si.nTrackPos; break;
+                case SB_THUMBPOSITION: newPos = HIWORD(wParam); break;
+                default: break;
+            }
+
+            newPos = max(si.nMin, min(newPos, si.nMax - (int)si.nPage + 1));
+            
+            if (newPos != oldPos) {
+                pData->scrollPos = newPos;
+                si.fMask = SIF_POS;
+                si.nPos = newPos;
+                SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+                
+                // Scroll the window content
+                ScrollWindow(hwnd, 0, oldPos - newPos, NULL, NULL);
+                UpdateWindow(hwnd);
+            }
+            break;
+        }
+
+        case WM_MOUSEWHEEL: {
+            if (!pData) break;
+            int delta = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+            SendMessage(hwnd, WM_VSCROLL, (delta > 0) ? SB_LINEUP : SB_LINEDOWN, 0);
+            return 0;
+        }
+
+        default:
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+// =======================================================
+// скролл панели точек
+// =======================================================
+// Add new data structure for Points Panel
+struct PointsPanelData {
+    int scrollPos;
+    int totalHeight;
+    std::vector<HWND> childControls;
+    std::vector<int> lineHeights;
+};
+
+void UpdateScrollInfo(HWND hwnd, PointsPanelData* pData) {
+    SCROLLINFO si = { sizeof(SCROLLINFO) };
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    RECT rc;
+    GetClientRect(hwnd, &rc);
+    si.nMin = 0;
+    si.nMax = pData->totalHeight;
+    si.nPage = rc.bottom;
+    si.nPos = pData->scrollPos;
+    SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+}
+
+void UpdateTotalHeight(PointsPanelData* pData) {
+    int height = pData->lineHeights[LINES+1];
+    pData->totalHeight = height + 30;
+
+    for (int i = 0; i < 10; ++i) {
+        if (i < LINES) continue;
+        else
+            for (int j = 5*i; j < pData->childControls.size(); ++j) {
+                ShowWindow(pData->childControls[j+4], SW_HIDE);
+            }
+    }
+}
+
+void RepositionChildren(HWND hwnd, PointsPanelData* pData) {
+    int yPos = 10 - pData->scrollPos;
+    size_t controlIdx = 0;
+
+    int counter = 0;
+
+    for (int lineHeight : pData->lineHeights) {
+        // Process lines
+        for (int i = 0; i < (counter ? 5 : 4); ++i) {
+            if (controlIdx >= pData->childControls.size()) break;
+            HWND hChild = pData->childControls[controlIdx];
+            
+            // Get original X position and width
+            RECT rc;
+            GetWindowRect(hChild, &rc);
+            MapWindowPoints(HWND_DESKTOP, hwnd, (LPPOINT)&rc, 2);
+            
+            SetWindowPos(hChild, NULL, 
+                rc.left,  // Keep original X position
+                yPos,     // Update Y position
+                rc.right - rc.left, 
+                rc.bottom - rc.top,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+            
+            controlIdx++;
+        }
+
+        yPos += lineHeight + 5;
+        counter++;
+    }
+}
+
+// Implement pointsInit similar to condInit but for points
+void pointsInit(HWND hPanel, PointsPanelData* pData) {
+    int yPos = 40;
+    const int lineSpacing = 5;
+
+    HWND hStatic1 = CreateWindow(L"STATIC", L"x1", WS_VISIBLE | WS_CHILD,
+        100, 0, 20, 20, hPanel, NULL, NULL, NULL);
+    HWND hStatic2 = CreateWindow(L"STATIC", L"y1", WS_VISIBLE | WS_CHILD,
+        140, 0, 20, 20, hPanel, NULL, NULL, NULL);
+    HWND hStatic3 = CreateWindow(L"STATIC", L"x2", WS_VISIBLE | WS_CHILD,
+        180, 0, 20, 20, hPanel, NULL, NULL, NULL);
+    HWND hStatic4 = CreateWindow(L"STATIC", L"y2", WS_VISIBLE | WS_CHILD,
+        220, 0, 20, 20, hPanel, NULL, NULL, NULL);
+    HWND lineControls[] = {hStatic1, hStatic2, hStatic3, hStatic4};
+    int maxHeight = 0;
+    for (HWND hCtrl : lineControls) {
+        pData->childControls.push_back(hCtrl);
+        RECT rc;
+        GetWindowRect(hCtrl, &rc);
+        maxHeight = max(maxHeight, rc.bottom - rc.top);
+    }
+    pData->lineHeights.push_back(maxHeight);
+
+    const int xPositions[] = {0, 90, 130, 170, 210};
+    const int widths[] = {80, 40, 40, 40, 40};
+
+    for (int lineIdx = 0; lineIdx < LINES; ++lineIdx) {
+        std::wstring label = L"Прямая " + std::to_wstring(lineIdx+1) + L":";
+        HWND hStatic = CreateWindow(L"STATIC", label.c_str(), WS_VISIBLE | WS_CHILD,
+            xPositions[0], yPos, widths[0], 20, hPanel, NULL, NULL, NULL);
+
+        HWND hEditX1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+            xPositions[1], yPos, widths[1], 20, hPanel, NULL, NULL, NULL);
+        
+        HWND hEditY1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+            xPositions[2], yPos, widths[2], 20, hPanel, NULL, NULL, NULL);
+
+        HWND hEditX2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+            xPositions[3], yPos, widths[3], 20, hPanel, NULL, NULL, NULL);
+        
+        HWND hEditY2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+            xPositions[4], yPos, widths[4], 20, hPanel, NULL, NULL, NULL);
+
+        // Store controls
+        HWND lineControls[] = {hStatic, hEditX1, hEditY1, hEditX2, hEditY2};
+        int maxHeight = 0;
+        for (HWND hCtrl : lineControls) {
+            pData->childControls.push_back(hCtrl);
+            RECT rc;
+            GetWindowRect(hCtrl, &rc);
+            maxHeight = max(maxHeight, rc.bottom - rc.top);
+        }
+        pData->lineHeights.push_back(maxHeight);
+        yPos += maxHeight + lineSpacing;
+    }
+    pData->totalHeight = yPos;
+    // Update scroll info (similar to ConditionsPanel)
+}
+
+// Add new window procedure for Points Panel
+LRESULT CALLBACK PointsPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    PointsPanelData* pData = (PointsPanelData*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
+
+    switch (msg) {
+        case WM_CREATE: {
+            pData = new PointsPanelData();
+            pData->scrollPos = 0;
+            pData->totalHeight = 0;
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pData);
+            pointsInit(hwnd, pData); // Implement this function
+            break;
+        }
+        case WM_DESTROY: {
+            if (pData) {
+                delete pData;
+                SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+            }
+            break;
+        }
+        case WM_SIZE: {
+            if (pData) {
+                UpdateScrollInfo(hwnd, pData);
+                RepositionChildren(hwnd, pData);
+            }
+            break;
+        }
+
+        case WM_VSCROLL: {
+            if (!pData) break;
+            SCROLLINFO si = { sizeof(SCROLLINFO) };
+            si.fMask = SIF_ALL;
+            GetScrollInfo(hwnd, SB_VERT, &si);
+
+            int oldPos = si.nPos;
+            int newPos = oldPos;
+
+            switch (LOWORD(wParam)) {
+                case SB_LINEUP:        newPos -= 10; break;
+                case SB_LINEDOWN:      newPos += 10; break;
+                case SB_PAGEUP:       newPos -= si.nPage; break;
+                case SB_PAGEDOWN:     newPos += si.nPage; break;
+                case SB_THUMBTRACK:   newPos = si.nTrackPos; break;
+                case SB_THUMBPOSITION: newPos = HIWORD(wParam); break;
+                default: break;
+            }
+
+            newPos = max(si.nMin, min(newPos, si.nMax - (int)si.nPage + 1));
+            
+            if (newPos != oldPos) {
+                pData->scrollPos = newPos;
+                si.fMask = SIF_POS;
+                si.nPos = newPos;
+                SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+                
+                // Scroll the window content
+                ScrollWindow(hwnd, 0, oldPos - newPos, NULL, NULL);
+                UpdateWindow(hwnd);
+            }
+            break;
+        }
+
+        case WM_MOUSEWHEEL: {
+            if (!pData) break;
+            int delta = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+            SendMessage(hwnd, WM_VSCROLL, (delta > 0) ? SB_LINEUP : SB_LINEDOWN, 0);
+            return 0;
+        }
+        default:
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+
 
 // =======================================================
 // инициализация окна
@@ -63,6 +506,28 @@ bool init(HWND hwnd) {
     GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
     // hBackgroundBrush = CreateSolidBrush(GetSysColor(COLOR_WINDOW));
     hBackgroundBrush = CreateSolidBrush(RGB(212, 208, 200));
+
+    // класс панели
+    // ================================
+    WNDCLASSEX wc = {};
+    wc.cbSize = sizeof(WNDCLASSEX);
+    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc = ConditionsPanelWndProc;  // Custom window procedure for scrolling
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hbrBackground = hBackgroundBrush;
+    wc.lpszClassName = L"ConditionsPanelClass";
+    RegisterClassEx(&wc);
+
+    WNDCLASSEX wcPoints = {};
+    wcPoints.cbSize = sizeof(WNDCLASSEX);
+    wcPoints.style = CS_HREDRAW | CS_VREDRAW;
+    wcPoints.lpfnWndProc = PointsPanelWndProc;
+    wcPoints.hInstance = GetModuleHandle(NULL);
+    wcPoints.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wcPoints.hbrBackground = hBackgroundBrush;
+    wcPoints.lpszClassName = L"PointsPanelClass";
+    RegisterClassEx(&wcPoints);
 
     // левая часть окна
     // ================================
@@ -90,115 +555,47 @@ bool init(HWND hwnd) {
         LEFT_GROUPBOX_WIDTH + 18 + 170, 26, 40, 30,
         hwnd, (HMENU)BUTTON_ZOOMOUT, NULL, NULL);
 
+    // кнопки управления прямыми
+    CreateWindow(L"BUTTON", L"Добавить", WS_VISIBLE | WS_CHILD,
+        230, 20, 70, 24,
+        hwnd, (HMENU)BUTTON_ADDLINE, NULL, NULL);
+    CreateWindow(L"BUTTON", L"Удалить", WS_VISIBLE | WS_CHILD,
+        310, 20, 70, 24,
+        hwnd, (HMENU)BUTTON_REMOVELINE, NULL, NULL);
+
     // условие
     CreateWindow(L"STATIC", L"Условие", WS_VISIBLE | WS_CHILD,
         40, 20, 60, 20, hwnd, NULL, NULL, NULL);
 
-    CreateWindow(L"STATIC", L"L=", WS_VISIBLE | WS_CHILD,
-        20, 40, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        40, 40, 60, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"x+", WS_VISIBLE | WS_CHILD,
-        104, 40, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        124, 40, 60, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"y -> max", WS_VISIBLE | WS_CHILD,
-        186, 40, 60, 20, hwnd, NULL, NULL, NULL);
+    // панель уравнений
+    HWND hConditionsPanel = CreateWindow(
+        L"ConditionsPanelClass",
+        NULL,
+        WS_VISIBLE | WS_CHILD | WS_VSCROLL | WS_BORDER,
+        20, 50,  // Position under "Условие"
+        LEFT_GROUPBOX_WIDTH - 20, 120,  // Fixed width and height
+        hwnd,
+        (HMENU)CONDITIONS_PANEL,
+        GetModuleHandle(NULL),
+        NULL
+    );
 
-    CreateWindow(L"STATIC", L"1)", WS_VISIBLE | WS_CHILD,
-        20, 66, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        40, 66, 60, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"x+", WS_VISIBLE | WS_CHILD,
-        104, 66, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        124, 66, 60, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"y", WS_VISIBLE | WS_CHILD,
-        186, 66, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"BUTTON", L"<=", WS_VISIBLE | WS_CHILD,
-        196, 65, 22, 22,
-        hwnd, (HMENU)BUTTON_SIGN, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        224, 66, 60, 20, hwnd, NULL, NULL, NULL);
-
-    CreateWindow(L"STATIC", L"2)", WS_VISIBLE | WS_CHILD,
-        20, 90, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        40, 90, 60, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"x+", WS_VISIBLE | WS_CHILD,
-        104, 90, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        124, 90, 60, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"y", WS_VISIBLE | WS_CHILD,
-        186, 90, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"BUTTON", L"<=", WS_VISIBLE | WS_CHILD,
-        196, 89, 22, 22,
-        hwnd, (HMENU)BUTTON_SIGN, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        224, 90, 60, 20, hwnd, NULL, NULL, NULL);
-
-    CreateWindow(L"STATIC", L"3)", WS_VISIBLE | WS_CHILD,
-        20, 114, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        40, 114, 60, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"x+", WS_VISIBLE | WS_CHILD,
-        104, 114, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        124, 114, 60, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"y", WS_VISIBLE | WS_CHILD,
-        186, 114, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"BUTTON", L"<=", WS_VISIBLE | WS_CHILD,
-        196, 113, 22, 22,
-        hwnd, (HMENU)BUTTON_SIGN, NULL, NULL);
-    CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-        224, 114, 60, 20, hwnd, NULL, NULL, NULL);
-
-    CreateWindow(L"STATIC", L"x>=0, y>=0", WS_VISIBLE | WS_CHILD,
-        60, 138, 100, 20, hwnd, NULL, NULL, NULL);
-
-    // прямые
+    // точки
     CreateWindow(L"STATIC", L"Прямые", WS_VISIBLE | WS_CHILD,
         40, 170, 60, 20, hwnd, NULL, NULL, NULL);
 
-    CreateWindow(L"STATIC", L"x1", WS_VISIBLE | WS_CHILD,
-        60, 190, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"y1", WS_VISIBLE | WS_CHILD,
-        95, 190, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"x2", WS_VISIBLE | WS_CHILD,
-        130, 190, 20, 20, hwnd, NULL, NULL, NULL);
-    CreateWindow(L"STATIC", L"y2", WS_VISIBLE | WS_CHILD,
-        165, 190, 20, 20, hwnd, NULL, NULL, NULL);
-
-    for (int i = 0; i < 3; i++) {
-        std::wstring label = std::to_wstring(i + 1) + L")";
-        CreateWindow(L"STATIC", label.c_str(), WS_VISIBLE | WS_CHILD,
-            20, 210 + i * 20, 20, 20, hwnd, NULL, NULL, NULL);
-
-        for (int j = 0; j < 4; j++) {
-            CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-                40 + j * 40, 210 + i * 20, 40, 20, hwnd, NULL, NULL, NULL);
-        }
-    }
-
-
-    // Conditions table
-    // const wchar_t* headers[] = { L"1", L"2", L"3" };
-    // for (int col = 0; col < 3; col++) {
-    //     CreateWindow(L"STATIC", headers[col], WS_VISIBLE | WS_CHILD | SS_CENTER,
-    //         40 + col * 120, 40, 30, 20, hwnd, NULL, NULL, NULL);
-    // }
-
-    // const wchar_t* labels[] = { L"x1", L"y1", L"x2", L"y2" };
-    // for (int row = 0; row < 4; row++) {
-    //     CreateWindow(L"STATIC", labels[row], WS_VISIBLE | WS_CHILD,
-    //         10, 70 + row * 30, 30, 20, hwnd, NULL, NULL, NULL);
-
-    //     for (int col = 0; col < 3; col++) {
-    //         CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
-    //             40 + col * 120, 70 + row * 30, 100, 20, hwnd, NULL, NULL, NULL);
-    //     }
-    // }
-
+    // папнель точек
+    HWND hPointsPanel = CreateWindow(
+        L"PointsPanelClass",
+        NULL,
+        WS_VISIBLE | WS_CHILD | WS_VSCROLL | WS_BORDER,
+        20, 190,
+        LEFT_GROUPBOX_WIDTH - 20, 120,
+        hwnd,
+        (HMENU)POINTS_PANEL,
+        GetModuleHandle(NULL),
+        NULL
+    );
 
     return true;
 }
@@ -219,6 +616,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         state.offsetX = plotWidth / 2.0f;
         state.offsetY = clientRect.bottom / 2.0f;
         state.scale = INITIAL_SCALE;
+
 
         break;
     }
@@ -297,6 +695,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         // graphics.FillRectangle(&plotBrush, 0, 0, plotArea.right - plotArea.left, plotArea.bottom - plotArea.top);
         DrawInfiniteGrid(hwnd, graphics, state.offsetX, state.offsetY, state.scale, plotArea);
         DrawAxesWithLabels(graphics, state.offsetX, state.offsetY, state.scale, plotArea);
+
+        // Reset clip region to draw lines anywhere in the plot area
+        // graphics.ResetClip();
+
+        // DrawLineHatched(hwnd, graphics, 5.0f, 5.0f, 10.0f, 10.0f, state);
+        DrawInfiniteLine(graphics, { 1., 1. }, { 0., 1. }, state.offsetX, state.offsetY, state.scale, plotArea);
+        // DrawLineHatched(hwnd, graphics, 1,1, 0, 1, state);
+        // DrawLineHatched(hwnd, graphics, 1,1, 1, 0, state);
+
 
         // освобождение ресурсов
         BitBlt(hdc, 0, 0, rc.right, rc.bottom, hdcMem, 0, 0, SRCCOPY);
@@ -445,264 +852,199 @@ int WorldToScreenY(float worldY, float offsetY, float scale) {
 }
 
 // =======================================================
-// отрисовка линий
-// =======================================================
-void DrawNormalLine(Graphics& graphics, int x1, int y1, int x2, int y2) {
-    Pen linePen(Color(150, 200, 200, 200));
-    graphics.DrawLine(&linePen, x1, y1, x2, y2);
-}
-
-void DrawHatchedLine(Graphics& graphics, int x1, int y1, int x2, int y2) {
-    HatchBrush hatchBrush(HatchStyleBackwardDiagonal, 
-                        Color(150, 200, 200, 200),
-                        Color(0, 0, 0, 0));
-    Pen hatchPen(&hatchBrush, 1);
-    graphics.DrawLine(&hatchPen, x1, y1, x2, y2);
-}
-
-// =======================================================
-// шаг сетки
-// =======================================================
-float ComputeGridStep(float scale) {
-    const float targetPixels = 50.0f; // Target 50 pixels between grid lines
-    float approxStep = targetPixels / scale;
-
-    // Calculate magnitude and normalize
-    float magnitude = powf(10, floorf(log10f(approxStep)));
-    float normalized = approxStep / magnitude;
-
-    // Round to nearest 1, 2, or 5
-    if (normalized < 1.5f) {
-        return 1.0f * magnitude;
-    } else if (normalized < 3.0f) {
-        return 2.0f * magnitude;
-    } else if (normalized < 7.0f) {
-        return 5.0f * magnitude;
-    } else {
-        return 10.0f * magnitude;
-    }
-}
-
-// =======================================================
 // отрисовка сетки
 // =======================================================
-void DrawGridLines(Graphics& graphics, float offsetX, float offsetY, float scale, 
-                   const RECT& plotArea, float gridStep) {
-    // Vertical lines
-    float left = ScreenToWorldX(plotArea.left, offsetX, scale);
-    float right = ScreenToWorldX(plotArea.right, offsetX, scale);
-    float startX = floorf(left / gridStep) * gridStep;
-    float endX = ceilf(right / gridStep) * gridStep;
-
-    for (float x = startX; x <= endX; x += gridStep) {
-        int screenX = BUTTON_AREA_WIDTH + static_cast<int>(x * scale + offsetX);
-        if (x > 0) { // Right of Y-axis
-            DrawHatchedLine(graphics, screenX, plotArea.top, screenX, plotArea.bottom);
-        } else {
-            DrawNormalLine(graphics, screenX, plotArea.top, screenX, plotArea.bottom);
-        }
-    }
-
-    // Horizontal lines
-    float top = ScreenToWorldY(plotArea.top, offsetY, scale);
-    float bottom = ScreenToWorldY(plotArea.bottom, offsetY, scale);
-    float startY = floorf(top / gridStep) * gridStep;
-    float endY = ceilf(bottom / gridStep) * gridStep;
-
-    for (float y = startY; y <= endY; y += gridStep) {
-        int screenY = static_cast<int>(y * scale + offsetY);
-        if (y > 0) { // Above X-axis (world coordinates)
-            DrawHatchedLine(graphics, BUTTON_AREA_WIDTH, screenY, plotArea.right, screenY);
-        } else {
-            DrawNormalLine(graphics, BUTTON_AREA_WIDTH, screenY, plotArea.right, screenY);
-        }
-    }
-}
-
-
-// =======================================================
-// Updated Grid Drawing Entry Point
-// =======================================================
-void DrawInfiniteGrid(HWND hwnd, Graphics& graphics, float offsetX, float offsetY,
-                     float scale, const RECT& plotArea) {
+void DrawInfiniteGrid(HWND hwnd, Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
     RECT rc;
     GetClientRect(hwnd, &rc);
 
-    // Background
+    // фон
     SolidBrush white(Color(255, 255, 255));
     graphics.FillRectangle(&white, 0, 0, rc.right, rc.bottom);
 
-    // Calculate dynamic grid step
-    float gridStep = ComputeGridStep(scale);
+    Pen gridPen(Color(150, 200, 200, 200));
+    SolidBrush textBrush(Color(120, 120, 120));
+    Font font(L"Arial", 10);
 
-    // Draw grid using line functions
-    DrawGridLines(graphics, offsetX, offsetY, scale, plotArea, gridStep);
+    float left = ScreenToWorldX(plotArea.left, offsetX, scale);
+    float right = ScreenToWorldX(plotArea.right, offsetX, scale);
+    float top = ScreenToWorldY(plotArea.top, offsetY, scale);
+    float bottom = ScreenToWorldY(plotArea.bottom, offsetY, scale);
+
+    // вертикальные линии
+    float startX = floor(left / GRID_STEP) * GRID_STEP;
+    float endX = ceil(right / GRID_STEP) * GRID_STEP;
+    for (float x = startX; x <= endX; x += GRID_STEP) {
+        int screenX = BUTTON_AREA_WIDTH + static_cast<int>(x * scale + offsetX);
+        graphics.DrawLine(&gridPen, screenX, plotArea.top, screenX, plotArea.bottom-35);
+    }
+
+    // горизонтальные линии
+    float startY = floor(top / GRID_STEP) * GRID_STEP;
+    float endY = ceil(bottom / GRID_STEP) * GRID_STEP;
+    for (float y = startY; y <= endY-1; y += GRID_STEP) {
+        int screenY = static_cast<int>(y * scale + offsetY);
+        graphics.DrawLine(&gridPen, BUTTON_AREA_WIDTH+25, screenY, plotArea.right, screenY);
+    }
 }
 
 // =======================================================
-// Axes Drawing Using Line Functions
+// линия со штриховкой внутри графика
 // =======================================================
-void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float scale,
-                        const RECT& plotArea) {
-    // Create axis-specific pen
-    Pen axisPen(Color(255, 0, 0, 0), 2);
+void DrawLineHatched(HWND hwnd, Graphics& graphics, float x1, float y1, float x2, float y2, PlotState& state) {
+    // 1. Use static pen to avoid GDI+ object creation/destruction every call
+    static Pen linePen(Color(255, 0, 0, 0), 2);
+    static bool firstRun = true;
+    if (firstRun) {
+        linePen.SetDashStyle(DashStyleDash);
+        firstRun = false;
+    }
 
-    // Calculate axis positions
-    int xAxisY = static_cast<int>(0 * scale + offsetY);
-    int yAxisX = BUTTON_AREA_WIDTH + static_cast<int>(0 * scale + offsetX);
+    // 2. Get valid plot area from main window
+    RECT plotArea;
+    GetClientRect(GetParent(hwnd), &plotArea);
+    plotArea.left = BUTTON_AREA_WIDTH + 10;  // Match WM_PAINT's drawing area
+    plotArea.top += 60;
+    plotArea.right -= 10;
+    plotArea.bottom -= 70;
 
-    // Draw X-axis
-    DrawNormalLine(graphics, BUTTON_AREA_WIDTH, xAxisY, plotArea.right, xAxisY);
+    // 3. Use your proven infinite line algorithm
+    PointF p1(x1, y1), p2(x2, y2);
+    float dx = p2.X - p1.X;
     
-    // Draw Y-axis
-    DrawNormalLine(graphics, yAxisX, plotArea.top, yAxisX, plotArea.bottom);
+    if (fabs(dx) < 1e-6) { // Vertical line
+        int screenX = WorldToScreenX(p1.X, state.offsetX, state.scale);
+        if (screenX < plotArea.left || screenX > plotArea.right) return;
+        graphics.DrawLine(&linePen, screenX, plotArea.top, screenX, plotArea.bottom);
+    } else {
+        float m = (p2.Y - p1.Y) / dx;
+        float b = p1.Y - m * p1.X;
 
-    // Rest of label drawing code remains the same...
-    // [Label drawing implementation from original code]
+        // Calculate visible bounds in WORLD coordinates
+        float worldLeft = ScreenToWorldX(plotArea.left, state.offsetX, state.scale);
+        float worldRight = ScreenToWorldX(plotArea.right, state.offsetX, state.scale);
+
+        // Calculate line endpoints at plot edges
+        PointF start(worldLeft, m * worldLeft + b);
+        PointF end(worldRight, m * worldRight + b);
+
+        // Convert to screen coordinates
+        int x1 = WorldToScreenX(start.X, state.offsetX, state.scale);
+        int y1 = WorldToScreenY(start.Y, state.offsetY, state.scale);
+        int x2 = WorldToScreenX(end.X, state.offsetX, state.scale);
+        int y2 = WorldToScreenY(end.Y, state.offsetY, state.scale);
+
+        // 4. Clip before drawing
+        if (x1 > plotArea.right && x2 > plotArea.right) return;
+        if (x1 < plotArea.left && x2 < plotArea.left) return;
+        
+        graphics.DrawLine(&linePen, x1, y1, x2, y2);
+    }
 }
 
-// // =======================================================
-// // Infinite Grid Drawing
-// // =======================================================
-// void DrawInfiniteGrid(HWND hwnd, Graphics& graphics, float offsetX, float offsetY, 
-//                       float scale, const RECT& plotArea) {
-//     RECT rc;
-//     GetClientRect(hwnd, &rc);
+void DrawInfiniteLine(Graphics& graphics, const PointF& p1, const PointF& p2, float offsetX, float offsetY, float scale, const RECT& plotArea) {
+    if (p1.X == p2.X && p1.Y == p2.Y) return;
 
-//     // Background
-//     SolidBrush white(Color(255, 255, 255));
-//     graphics.FillRectangle(&white, 0, 0, rc.right, rc.bottom);
+    Pen linePen(Color(255, 0, 0, 0), 1);
 
-//     // Calculate dynamic grid step
-//     float gridStep = ComputeGridStep(scale);
 
-//     // Draw grid lines
-//     DrawGridLines(graphics, offsetX, offsetY, scale, plotArea, gridStep);
-// }
+    float worldLeft = ScreenToWorldX(plotArea.left, offsetX, scale);
+    float worldRight = ScreenToWorldX(plotArea.right, offsetX, scale);
 
-// // =======================================================
-// // Axes Drawing with Hatching
-// // =======================================================
-// void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float scale, 
-//                         const RECT& plotArea) {
-//     Pen axisPen(Color(255, 0, 0, 0), 2);
-//     SolidBrush textBrush(Color(0, 0, 0));
-//     Font font(L"Arial", 10);
+    // Calculate line equation y = mx + b
+    float dx = p2.X - p1.X;
+    float dy = p2.Y - p1.Y;
 
-//     // Calculate axis positions
-//     int screenY = static_cast<int>(0 * scale + offsetY);       // X-axis
-//     int screenX = BUTTON_AREA_WIDTH + static_cast<int>(0 * scale + offsetX); // Y-axis
+    // In DrawInfiniteLine function, fix vertical line detection:
+    if (fabs(dx) < 1e-6) {
+        float x = p1.X;
+        int screenX = WorldToScreenX(x, offsetX, scale);
+        graphics.DrawLine(&linePen, screenX, plotArea.top, screenX, plotArea.bottom);
+    }
+    else {
+        float m = dy / dx;
+        float b = p1.Y - m * p1.X;
 
-//     // Draw X-axis
-//     graphics.DrawLine(&axisPen, BUTTON_AREA_WIDTH, screenY, plotArea.right, screenY);
+        PointF start, end;
+        start.X = worldLeft;
+        start.Y = m * start.X + b;
+        end.X = worldRight;
+        end.Y = m * end.X + b;
 
-//     // Draw Y-axis
-//     graphics.DrawLine(&axisPen, screenX, plotArea.top, screenX, plotArea.bottom);
+        int x1 = WorldToScreenX(start.X, offsetX, scale);
+        int y1 = WorldToScreenY(start.Y, offsetY, scale);
+        int x2 = WorldToScreenX(end.X, offsetX, scale);
+        int y2 = WorldToScreenY(end.Y, offsetY, scale);
 
-//     // Hatching for x>0 and y>0
-//     int hatchLeft = max(screenX, BUTTON_AREA_WIDTH);
-//     int hatchTop = max(screenY, plotArea.top);
-//     int hatchRight = plotArea.right;
-//     int hatchBottom = plotArea.bottom;
+        graphics.DrawLine(&linePen, x1, y1, x2, y2);
+    }
+}
+// =======================================================
+// отрисовка осей
+// =======================================================
+void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
+    Pen axisPen(Color(255, 0, 0, 0), 2);
+    SolidBrush textBrush(Color(0, 0, 0));
+    Font font(L"Arial", 10);
 
-//     if (hatchLeft < hatchRight && hatchTop < hatchBottom) {
-//         HatchBrush hatchBrush(
-//             HatchStyleBackwardDiagonal, 
-//             Color(50, 200, 200, 200),  // Semi-transparent hatch
-//             Color(0, 0, 0, 0)          // Transparent background
-//         );
-//         graphics.FillRectangle(
-//             &hatchBrush,
-//             hatchLeft,
-//             hatchTop,
-//             hatchRight - hatchLeft,
-//             hatchBottom - hatchTop
-//         );
-//     }
+    // Define margins (in pixels) for labels
+    const int LEFT_MARGIN = 25;    // Space for Y-axis labels
+    const int BOTTOM_MARGIN = 35;  // Space for X-axis labels
+    const int LABEL_OFFSET = 5;    // Additional spacing between labels and edges
 
-//     // Rest of label drawing code remains the same...
-//     // [Label drawing code from original implementation]
-// }
-// // =======================================================
-// // отрисовка сетки
-// // =======================================================
-// void DrawInfiniteGrid(HWND hwnd, Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
-//     RECT rc;
-//     GetClientRect(hwnd, &rc);
+    // Calculate adjusted plot area (smaller to account for margins)
+    RECT adjustedPlotArea = plotArea;
+    adjustedPlotArea.left += LEFT_MARGIN;
+    adjustedPlotArea.bottom -= BOTTOM_MARGIN;
 
-//     // фон
-//     SolidBrush white(Color(255, 255, 255));
-//     graphics.FillRectangle(&white, 0, 0, rc.right, rc.bottom);
+    // X-axis labels (positioned above bottom margin)
+    const int X_LABEL_Y = plotArea.bottom - BOTTOM_MARGIN + LABEL_OFFSET;
+    float worldLeftX = ScreenToWorldX(adjustedPlotArea.left, offsetX, scale);
+    float worldRightX = ScreenToWorldX(adjustedPlotArea.right, offsetX, scale);
+    
+    float xStart = floor(worldLeftX / GRID_STEP) * GRID_STEP;
+    float xEnd = ceil(worldRightX / GRID_STEP) * GRID_STEP;
+    
+    for (float x = xStart; x <= xEnd; x += GRID_STEP) {
+        int screenX = WorldToScreenX(x, offsetX, scale);
+        if (screenX < adjustedPlotArea.left || screenX > adjustedPlotArea.right) continue;
+        
+        std::wstring text = std::to_wstring(static_cast<int>(x));
+        // Center-align the text under the grid line
+        graphics.DrawString(text.c_str(), -1, &font,
+            PointF(screenX - 10, X_LABEL_Y), &textBrush);
+    }
 
-//     Pen gridPen(Color(150, 200, 200, 200));
-//     SolidBrush textBrush(Color(120, 120, 120));
-//     Font font(L"Arial", 10);
+    // Y-axis labels (positioned right of left margin)
+    const int Y_LABEL_X = plotArea.left + LEFT_MARGIN - LABEL_OFFSET - 15;
+    float worldTopY = ScreenToWorldY(adjustedPlotArea.top, offsetY, scale);
+    float worldBottomY = ScreenToWorldY(adjustedPlotArea.bottom, offsetY, scale);
+    
+    float yStart = floor(worldTopY / GRID_STEP) * GRID_STEP;
+    float yEnd = ceil(worldBottomY / GRID_STEP) * GRID_STEP;
+    
+    for (float y = yStart; y <= yEnd; y += GRID_STEP) {
+        int screenY = WorldToScreenY(y, offsetY, scale);
+        if (screenY < adjustedPlotArea.top || screenY > adjustedPlotArea.bottom) continue;
+        
+        std::wstring text = std::to_wstring(static_cast<int>(-y));
+        // Vertically center-align the text
+        graphics.DrawString(text.c_str(), -1, &font,
+            PointF(Y_LABEL_X, screenY - 8), &textBrush);
+    }
 
-//     float left = ScreenToWorldX(plotArea.left, offsetX, scale);
-//     float right = ScreenToWorldX(plotArea.right, offsetX, scale);
-//     float top = ScreenToWorldY(plotArea.top, offsetY, scale);
-//     float bottom = ScreenToWorldY(plotArea.bottom, offsetY, scale);
+    // Draw axis lines within adjusted plot area
+    int screenY0 = WorldToScreenY(0, offsetY, scale);
+    if (screenY0 >= adjustedPlotArea.top && screenY0 <= adjustedPlotArea.bottom) {
+        graphics.DrawLine(&axisPen, 
+            adjustedPlotArea.left, screenY0,
+            adjustedPlotArea.right, screenY0);
+    }
 
-//     // вертикальные линии
-//     float startX = floor(left / GRID_STEP) * GRID_STEP;
-//     float endX = ceil(right / GRID_STEP) * GRID_STEP;
-//     for (float x = startX; x <= endX; x += GRID_STEP) {
-//         int screenX = BUTTON_AREA_WIDTH + static_cast<int>(x * scale + offsetX);
-//         graphics.DrawLine(&gridPen, screenX, plotArea.top, screenX, plotArea.bottom);
-//     }
-
-//     // горизонтальные линии
-//     float startY = floor(top / GRID_STEP) * GRID_STEP;
-//     float endY = ceil(bottom / GRID_STEP) * GRID_STEP;
-//     for (float y = startY; y <= endY; y += GRID_STEP) {
-//         int screenY = static_cast<int>(y * scale + offsetY);
-//         graphics.DrawLine(&gridPen, BUTTON_AREA_WIDTH, screenY, plotArea.right, screenY);
-//     }
-// }
-
-// // =======================================================
-// // отрисовка осей
-// // =======================================================
-// void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea) {
-//     Pen axisPen(Color(255, 0, 0, 0), 2);
-//     SolidBrush textBrush(Color(0, 0, 0));
-//     Font font(L"Arial", 10);
-
-//     // X axis
-//     int screenY = static_cast<int>(0 * scale + offsetY);
-//     graphics.DrawLine(&axisPen,
-//         BUTTON_AREA_WIDTH, screenY,
-//         plotArea.right, screenY);
-
-//     // Y axis
-//     int screenX = BUTTON_AREA_WIDTH + static_cast<int>(0 * scale + offsetX);
-//     graphics.DrawLine(&axisPen,
-//         screenX, plotArea.top,
-//         screenX, plotArea.bottom);
-
-//     // X labels
-//     float xStart = floor(ScreenToWorldX(BUTTON_AREA_WIDTH, offsetX, scale) / GRID_STEP) * GRID_STEP;
-//     float xEnd = ceil(ScreenToWorldX(plotArea.right, offsetX, scale) / GRID_STEP) * GRID_STEP;
-//     for (float x = xStart; x <= xEnd; x += GRID_STEP) {
-//         if (x == 0) continue;
-//         int labelX = BUTTON_AREA_WIDTH + static_cast<int>(x * scale + offsetX);
-//         std::wstring text = std::to_wstring(static_cast<int>(x));
-//         graphics.DrawString(text.c_str(), -1, &font,
-//             PointF(labelX, screenY + 15), &textBrush);
-//     }
-
-//     // Y labels
-//     float yStart = floor(ScreenToWorldY(plotArea.top, offsetY, scale) / GRID_STEP) * GRID_STEP;
-//     float yEnd = ceil(ScreenToWorldY(plotArea.bottom, offsetY, scale) / GRID_STEP) * GRID_STEP;
-//     for (float y = yStart; y <= yEnd; y += GRID_STEP) {
-//         if (y == 0) continue;
-//         int labelY = static_cast<int>(y * scale + offsetY);
-//         std::wstring text = std::to_wstring(static_cast<int>(-y));
-//         graphics.DrawString(text.c_str(), -1, &font,
-//             PointF(screenX + 15, labelY), &textBrush);
-//     }
-
-//     // Origin label
-//     graphics.DrawString(L"0", -1, &font,
-//         PointF(screenX + 5, screenY + 5), &textBrush);
-// }
+    int screenX0 = WorldToScreenX(0, offsetX, scale);
+    if (screenX0 >= adjustedPlotArea.left && screenX0 <= adjustedPlotArea.right) {
+        graphics.DrawLine(&axisPen,
+            screenX0, adjustedPlotArea.top,
+            screenX0, adjustedPlotArea.bottom);
+    }
+}
