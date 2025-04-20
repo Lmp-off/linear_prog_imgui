@@ -3,6 +3,7 @@
 #include <gdiplus.h>
 #include <cmath>
 #include <string>
+#include <cwchar>
 #include <sstream>
 #include <vector>
 #include <algorithm>
@@ -24,7 +25,7 @@ using namespace Gdiplus;
 #define LEFT_GROUPBOX_WIDTH 320
 
 // константы
-const int BUTTON_AREA_WIDTH = 400;
+const int BUTTON_AREA_WIDTH = 320;
 const float INITIAL_SCALE = 50.0f;
 const float ZOOM_FACTOR = 1.2f;
 const int GRID_STEP = 1;
@@ -59,13 +60,46 @@ struct PlotState {
 
 static int LINES = 3;
 
+struct LinePoints {
+    float x1;
+    float y1;
+    float x2;
+    float y2;
+};
+
+static std::vector<LinePoints> g_lines;
+
 // объявление функций
 void DrawInfiniteGrid(HWND hwnd, Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea);
 void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float scale, const RECT& plotArea);
 
 void DrawLineHatched(HWND hwnd, Graphics& graphics, float x1, float y1, float x2, float y2, PlotState& state);
-void DrawInfiniteLine(Graphics& graphics, const PointF& p1, const PointF& p2, float offsetX, float offsetY, float scale, 
-        const RECT& plotArea);
+void DrawInfiniteLine(Graphics& graphics, const PointF& p1, const PointF& p2, float offsetX, float offsetY, float scale,
+    const RECT& plotArea);
+
+bool IsValidNumber(const std::wstring& str) {
+    if (str.empty()) return false;
+    size_t pos;
+    try {
+        std::stod(str, &pos);
+        return pos == str.length();
+    }
+    catch (...) {
+        return false;
+    }
+}
+
+void ShowErrorMessage(HWND hwnd, const wchar_t* message) {
+    MessageBoxW(hwnd, message, L"Ошибка ввода", MB_ICONERROR | MB_OK);
+}
+
+void SetTabOrder(HWND hPanel, const std::vector<HWND>& controls) {
+    if (controls.size() < 2) return;
+
+    for (size_t i = 0; i < controls.size() - 1; ++i) {
+        SetWindowPos(controls[i], controls[i + 1], 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+    }
+}
 
 // =======================================================
 // скролл панели условий
@@ -111,29 +145,29 @@ void condInit(HWND hPanel, ConditionsPanelData* pData) {
     const int lineSpacing = 5;
 
     // X positions for controls in a line (L=0, Edit1=20, x+=84, Edit2=104, y->max=168)
-    const int xPositions[] = {10, 30, 92, 110, 172, 188, 214};
-    const int widths[] = {20, 60, 20, 60, 20, 20, 60};
+    const int xPositions[] = { 10, 30, 92, 110, 172, 188, 214 };
+    const int widths[] = { 20, 60, 20, 60, 20, 20, 60 };
 
     // first row
     HWND hStatic1 = CreateWindow(L"STATIC", L"L=", WS_VISIBLE | WS_CHILD,
         xPositions[0], yPos, widths[0], 20, hPanel, NULL, NULL, NULL);
-    
+
     HWND hEdit1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
         xPositions[1], yPos, widths[1], 20, hPanel, NULL, NULL, NULL);
-    
+
     HWND hStatic2 = CreateWindow(L"STATIC", L"x+", WS_VISIBLE | WS_CHILD,
         xPositions[2], yPos, widths[2], 20, hPanel, NULL, NULL, NULL);
-    
+
     HWND hEdit2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
         xPositions[3], yPos, widths[3], 20, hPanel, NULL, NULL, NULL);
-    
+
     HWND hStatic3 = CreateWindow(L"STATIC", L"y -> max", WS_VISIBLE | WS_CHILD,
         xPositions[4], yPos, widths[6], 20, hPanel, NULL, NULL, NULL);
-    
+
     // Store controls and calculate line height
     int maxHeight = 0;
-    HWND lineControls[] = {hStatic1, hEdit1, hStatic2, hEdit2, hStatic3};
-    
+    HWND lineControls[] = { hStatic1, hEdit1, hStatic2, hEdit2, hStatic3 };
+
     for (HWND hCtrl : lineControls) {
         pData->childControls.push_back(hCtrl);
         RECT rc;
@@ -146,18 +180,18 @@ void condInit(HWND hPanel, ConditionsPanelData* pData) {
     // lines
     for (int lineIdx = 0; lineIdx < 10; ++lineIdx) {
         int maxHeight = 0;
-        
+
         // Create controls for this line
         std::wstring label = std::to_wstring(lineIdx + 1) + L")";
         HWND hStatic0 = CreateWindow(L"STATIC", label.c_str(), WS_VISIBLE | WS_CHILD,
             xPositions[0], yPos, widths[0], 20, hPanel, NULL, NULL, NULL);
-        
+
         HWND hEdit1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
             xPositions[1], yPos, widths[1], 20, hPanel, NULL, NULL, NULL);
-        
+
         HWND hStatic1 = CreateWindow(L"STATIC", L"x+", WS_VISIBLE | WS_CHILD,
             xPositions[2], yPos, widths[2], 20, hPanel, NULL, NULL, NULL);
-        
+
         HWND hEdit2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
             xPositions[3], yPos, widths[3], 20, hPanel, NULL, NULL, NULL);
 
@@ -166,12 +200,12 @@ void condInit(HWND hPanel, ConditionsPanelData* pData) {
 
         HWND hButton1 = CreateWindow(L"BUTTON", L"<=", WS_VISIBLE | WS_CHILD,
             xPositions[5], yPos, widths[5], 20, hPanel, (HMENU)(BUTTON_SIGN + lineIdx), NULL, NULL);
-        
+
         HWND hEdit3 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
             xPositions[6], yPos, widths[6], 20, hPanel, NULL, NULL, NULL);
 
         // Store controls and calculate line height
-        HWND lineControls[] = {hStatic0, hEdit1, hStatic1, hEdit2, hStatic2, hButton1, hEdit3};
+        HWND lineControls[] = { hStatic0, hEdit1, hStatic1, hEdit2, hStatic2, hButton1, hEdit3 };
         for (HWND hCtrl : lineControls) {
             pData->childControls.push_back(hCtrl);
             RECT rc;
@@ -202,19 +236,19 @@ void RepositionChildren(HWND hwnd, ConditionsPanelData* pData) {
         for (int i = 0; i < (counter ? 7 : 5); ++i) {
             if (controlIdx >= pData->childControls.size()) break;
             HWND hChild = pData->childControls[controlIdx];
-            
+
             // Get original X position and width
             RECT rc;
             GetWindowRect(hChild, &rc);
             MapWindowPoints(HWND_DESKTOP, hwnd, (LPPOINT)&rc, 2);
-            
-            SetWindowPos(hChild, NULL, 
+
+            SetWindowPos(hChild, NULL,
                 rc.left,  // Keep original X position
                 yPos,     // Update Y position
-                rc.right - rc.left, 
+                rc.right - rc.left,
                 rc.bottom - rc.top,
                 SWP_NOZORDER | SWP_NOACTIVATE);
-            
+
             controlIdx++;
         }
 
@@ -227,74 +261,74 @@ LRESULT CALLBACK ConditionsPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
     ConditionsPanelData* pData = (ConditionsPanelData*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
     switch (msg) {
-        case WM_CREATE: {
-            pData = new ConditionsPanelData();
-            pData->scrollPos = 0;
-            pData->totalHeight = 0;
-            SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pData);
-            condInit(hwnd, pData);
-            break;
+    case WM_CREATE: {
+        pData = new ConditionsPanelData();
+        pData->scrollPos = 0;
+        pData->totalHeight = 0;
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pData);
+        condInit(hwnd, pData);
+        break;
+    }
+
+    case WM_DESTROY: {
+        if (pData) {
+            delete pData;
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+        }
+        break;
+    }
+
+    case WM_SIZE: {
+        if (pData) {
+            UpdateScrollInfo(hwnd, pData);
+            RepositionChildren(hwnd, pData);
+        }
+        break;
+    }
+
+    case WM_VSCROLL: {
+        if (!pData) break;
+        SCROLLINFO si = { sizeof(SCROLLINFO) };
+        si.fMask = SIF_ALL;
+        GetScrollInfo(hwnd, SB_VERT, &si);
+
+        int oldPos = si.nPos;
+        int newPos = oldPos;
+
+        switch (LOWORD(wParam)) {
+        case SB_LINEUP:        newPos -= 10; break;
+        case SB_LINEDOWN:      newPos += 10; break;
+        case SB_PAGEUP:       newPos -= si.nPage; break;
+        case SB_PAGEDOWN:     newPos += si.nPage; break;
+        case SB_THUMBTRACK:   newPos = si.nTrackPos; break;
+        case SB_THUMBPOSITION: newPos = HIWORD(wParam); break;
+        default: break;
         }
 
-        case WM_DESTROY: {
-            if (pData) {
-                delete pData;
-                SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
-            }
-            break;
+        newPos = max(si.nMin, min(newPos, si.nMax - (int)si.nPage + 1));
+
+        if (newPos != oldPos) {
+            pData->scrollPos = newPos;
+            si.fMask = SIF_POS;
+            si.nPos = newPos;
+            SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+
+            // Scroll the window content
+            ScrollWindow(hwnd, 0, oldPos - newPos, NULL, NULL);
+            UpdateWindow(hwnd);
         }
+        break;
+    }
 
-        case WM_SIZE: {
-            if (pData) {
-                UpdateScrollInfo(hwnd, pData);
-                RepositionChildren(hwnd, pData);
-            }
-            break;
-        }
+    case WM_MOUSEWHEEL: {
+        if (!pData) break;
+        int delta = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+        SendMessage(hwnd, WM_VSCROLL, (delta > 0) ? SB_LINEUP : SB_LINEDOWN, 0);
+        return 0;
+    }
 
-        case WM_VSCROLL: {
-            if (!pData) break;
-            SCROLLINFO si = { sizeof(SCROLLINFO) };
-            si.fMask = SIF_ALL;
-            GetScrollInfo(hwnd, SB_VERT, &si);
-
-            int oldPos = si.nPos;
-            int newPos = oldPos;
-
-            switch (LOWORD(wParam)) {
-                case SB_LINEUP:        newPos -= 10; break;
-                case SB_LINEDOWN:      newPos += 10; break;
-                case SB_PAGEUP:       newPos -= si.nPage; break;
-                case SB_PAGEDOWN:     newPos += si.nPage; break;
-                case SB_THUMBTRACK:   newPos = si.nTrackPos; break;
-                case SB_THUMBPOSITION: newPos = HIWORD(wParam); break;
-                default: break;
-            }
-
-            newPos = max(si.nMin, min(newPos, si.nMax - (int)si.nPage + 1));
-            
-            if (newPos != oldPos) {
-                pData->scrollPos = newPos;
-                si.fMask = SIF_POS;
-                si.nPos = newPos;
-                SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
-                
-                // Scroll the window content
-                ScrollWindow(hwnd, 0, oldPos - newPos, NULL, NULL);
-                UpdateWindow(hwnd);
-            }
-            break;
-        }
-
-        case WM_MOUSEWHEEL: {
-            if (!pData) break;
-            int delta = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
-            SendMessage(hwnd, WM_VSCROLL, (delta > 0) ? SB_LINEUP : SB_LINEDOWN, 0);
-            return 0;
-        }
-
-        default:
-            return DefWindowProc(hwnd, msg, wParam, lParam);
+    default:
+        return DefWindowProc(hwnd, msg, wParam, lParam);
     }
     return 0;
 }
@@ -350,19 +384,19 @@ void RepositionChildren(HWND hwnd, PointsPanelData* pData) {
         for (int i = 0; i < (counter ? 5 : 4); ++i) {
             if (controlIdx >= pData->childControls.size()) break;
             HWND hChild = pData->childControls[controlIdx];
-            
+
             // Get original X position and width
             RECT rc;
             GetWindowRect(hChild, &rc);
             MapWindowPoints(HWND_DESKTOP, hwnd, (LPPOINT)&rc, 2);
-            
-            SetWindowPos(hChild, NULL, 
+
+            SetWindowPos(hChild, NULL,
                 rc.left,  // Keep original X position
                 yPos,     // Update Y position
-                rc.right - rc.left, 
+                rc.right - rc.left,
                 rc.bottom - rc.top,
                 SWP_NOZORDER | SWP_NOACTIVATE);
-            
+
             controlIdx++;
         }
 
@@ -384,7 +418,7 @@ void pointsInit(HWND hPanel, PointsPanelData* pData) {
         190, 0, 20, 20, hPanel, NULL, NULL, NULL);
     HWND hStatic4 = CreateWindow(L"STATIC", L"y2", WS_VISIBLE | WS_CHILD,
         230, 0, 20, 20, hPanel, NULL, NULL, NULL);
-    HWND lineControls[] = {hStatic1, hStatic2, hStatic3, hStatic4};
+    HWND lineControls[] = { hStatic1, hStatic2, hStatic3, hStatic4 };
     int maxHeight = 0;
     for (HWND hCtrl : lineControls) {
         pData->childControls.push_back(hCtrl);
@@ -394,28 +428,28 @@ void pointsInit(HWND hPanel, PointsPanelData* pData) {
     }
     pData->lineHeights.push_back(maxHeight);
 
-    const int xPositions[] = {10, 100, 140, 180, 220};
-    const int widths[] = {80, 40, 40, 40, 40};
+    const int xPositions[] = { 10, 100, 140, 180, 220 };
+    const int widths[] = { 80, 40, 40, 40, 40 };
 
     for (int lineIdx = 0; lineIdx < 10; ++lineIdx) {
-        std::wstring label = L"Прямая " + std::to_wstring(lineIdx+1) + L":";
-        HWND hStatic = CreateWindow(L"STATIC", label.c_str(), WS_VISIBLE | WS_CHILD,
+        std::wstring label = L"Прямая " + std::to_wstring(lineIdx + 1) + L":";
+        HWND hStatic = CreateWindow(L"STATIC", label.c_str(), WS_VISIBLE | WS_CHILD | WS_TABSTOP,
             xPositions[0], yPos, widths[0], 20, hPanel, NULL, NULL, NULL);
 
-        HWND hEditX1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+        HWND hEditX1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP,
             xPositions[1], yPos, widths[1], 20, hPanel, NULL, NULL, NULL);
-        
-        HWND hEditY1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+
+        HWND hEditY1 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP,
             xPositions[2], yPos, widths[2], 20, hPanel, NULL, NULL, NULL);
 
-        HWND hEditX2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+        HWND hEditX2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP,
             xPositions[3], yPos, widths[3], 20, hPanel, NULL, NULL, NULL);
-        
-        HWND hEditY2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
+
+        HWND hEditY2 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER | WS_TABSTOP,
             xPositions[4], yPos, widths[4], 20, hPanel, NULL, NULL, NULL);
 
         // Store controls
-        HWND lineControls[] = {hStatic, hEditX1, hEditY1, hEditX2, hEditY2};
+        HWND lineControls[] = { hStatic, hEditX1, hEditY1, hEditX2, hEditY2 };
         int maxHeight = 0;
         for (HWND hCtrl : lineControls) {
             pData->childControls.push_back(hCtrl);
@@ -429,6 +463,7 @@ void pointsInit(HWND hPanel, PointsPanelData* pData) {
     pData->totalHeight = yPos;
 
     UpdateTotalHeight(pData);
+    SetTabOrder(hPanel, pData->childControls);
 }
 
 // Add new window procedure for Points Panel
@@ -436,71 +471,84 @@ LRESULT CALLBACK PointsPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     PointsPanelData* pData = (PointsPanelData*)GetWindowLongPtr(hwnd, GWLP_USERDATA);
 
     switch (msg) {
-        case WM_CREATE: {
-            pData = new PointsPanelData();
-            pData->scrollPos = 0;
-            pData->totalHeight = 0;
-            SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pData);
-            pointsInit(hwnd, pData); // Implement this function
-            break;
+    case WM_CREATE: {
+        pData = new PointsPanelData();
+        pData->scrollPos = 0;
+        pData->totalHeight = 0;
+        SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pData);
+        pointsInit(hwnd, pData); // Implement this function
+        break;
+    }
+    case WM_DESTROY: {
+        if (pData) {
+            delete pData;
+            SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
         }
-        case WM_DESTROY: {
-            if (pData) {
-                delete pData;
-                SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
-            }
-            break;
+        break;
+    }
+    case WM_SIZE: {
+        if (pData) {
+            UpdateScrollInfo(hwnd, pData);
+            RepositionChildren(hwnd, pData);
         }
-        case WM_SIZE: {
-            if (pData) {
-                UpdateScrollInfo(hwnd, pData);
-                RepositionChildren(hwnd, pData);
-            }
-            break;
-        }
+        break;
+    }
 
-        case WM_VSCROLL: {
-            if (!pData) break;
-            SCROLLINFO si = { sizeof(SCROLLINFO) };
-            si.fMask = SIF_ALL;
-            GetScrollInfo(hwnd, SB_VERT, &si);
+    case WM_VSCROLL: {
+        if (!pData) break;
+        SCROLLINFO si = { sizeof(SCROLLINFO) };
+        si.fMask = SIF_ALL;
+        GetScrollInfo(hwnd, SB_VERT, &si);
 
-            int oldPos = si.nPos;
-            int newPos = oldPos;
+        int oldPos = si.nPos;
+        int newPos = oldPos;
 
-            switch (LOWORD(wParam)) {
-                case SB_LINEUP:        newPos -= 10; break;
-                case SB_LINEDOWN:      newPos += 10; break;
-                case SB_PAGEUP:       newPos -= si.nPage; break;
-                case SB_PAGEDOWN:     newPos += si.nPage; break;
-                case SB_THUMBTRACK:   newPos = si.nTrackPos; break;
-                case SB_THUMBPOSITION: newPos = HIWORD(wParam); break;
-                default: break;
-            }
-
-            newPos = max(si.nMin, min(newPos, si.nMax - (int)si.nPage + 1));
-            
-            if (newPos != oldPos) {
-                pData->scrollPos = newPos;
-                si.fMask = SIF_POS;
-                si.nPos = newPos;
-                SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
-                
-                // Scroll the window content
-                ScrollWindow(hwnd, 0, oldPos - newPos, NULL, NULL);
-                UpdateWindow(hwnd);
-            }
-            break;
+        switch (LOWORD(wParam)) {
+        case SB_LINEUP:        newPos -= 10; break;
+        case SB_LINEDOWN:      newPos += 10; break;
+        case SB_PAGEUP:       newPos -= si.nPage; break;
+        case SB_PAGEDOWN:     newPos += si.nPage; break;
+        case SB_THUMBTRACK:   newPos = si.nTrackPos; break;
+        case SB_THUMBPOSITION: newPos = HIWORD(wParam); break;
+        default: break;
         }
 
-        case WM_MOUSEWHEEL: {
-            if (!pData) break;
-            int delta = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
-            SendMessage(hwnd, WM_VSCROLL, (delta > 0) ? SB_LINEUP : SB_LINEDOWN, 0);
+        newPos = max(si.nMin, min(newPos, si.nMax - (int)si.nPage + 1));
+
+        if (newPos != oldPos) {
+            pData->scrollPos = newPos;
+            si.fMask = SIF_POS;
+            si.nPos = newPos;
+            SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
+
+            // Scroll the window content
+            ScrollWindow(hwnd, 0, oldPos - newPos, NULL, NULL);
+            UpdateWindow(hwnd);
+        }
+        break;
+    }
+
+    case WM_GETDLGCODE:
+        return DLGC_WANTALLKEYS | DLGC_WANTARROWS | DLGC_WANTTAB;
+
+    case WM_KEYDOWN:
+        if (wParam == VK_TAB) {
+            HWND hNext = GetNextDlgTabItem(GetParent(hwnd), GetFocus(), GetKeyState(VK_SHIFT) & 0x8000);
+            if (hNext) {
+                SetFocus(hNext);
+            }
             return 0;
         }
-        default:
-            return DefWindowProc(hwnd, msg, wParam, lParam);
+        break;
+
+    case WM_MOUSEWHEEL: {
+        if (!pData) break;
+        int delta = GET_WHEEL_DELTA_WPARAM(wParam) / WHEEL_DELTA;
+        SendMessage(hwnd, WM_VSCROLL, (delta > 0) ? SB_LINEUP : SB_LINEDOWN, 0);
+        return 0;
+    }
+    default:
+        return DefWindowProc(hwnd, msg, wParam, lParam);
     }
     return 0;
 }
@@ -699,9 +747,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         plotArea.left = BUTTON_AREA_WIDTH;
 
         graphics.SetClip(Rect(
-            plotArea.left - 2,
+            plotArea.left + 16,
             plotArea.top + 60,
-            plotArea.right - plotArea.left - 14,
+            plotArea.right - plotArea.left - 26,
             plotArea.bottom - plotArea.top - 70
         ));
         SolidBrush plotBrush(GetSysColor(COLOR_WINDOW));
@@ -713,10 +761,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         // Reset clip region to draw lines anywhere in the plot area
         // graphics.ResetClip();
 
-        // DrawLineHatched(hwnd, graphics, 5.0f, 5.0f, 10.0f, 10.0f, state);
-        DrawInfiniteLine(graphics, { 1., 1. }, { 0., 1. }, state.offsetX, state.offsetY, state.scale, plotArea);
-        // DrawLineHatched(hwnd, graphics, 1,1, 0, 1, state);
-        // DrawLineHatched(hwnd, graphics, 1,1, 1, 0, state);
+        // Draw lines from the global container
+        for (const auto& line : g_lines) {
+            DrawInfiniteLine(graphics,
+                PointF(line.x1, -line.y1),
+                PointF(line.x2, -line.y2),
+                state.offsetX, state.offsetY, state.scale, plotArea);
+        }
 
 
         // освобождение ресурсов
@@ -727,37 +778,37 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         EndPaint(hwnd, &ps);
         break;
     }
-    // обработка нажатий
+                 // обработка нажатий
     case WM_COMMAND: {
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
         int plotWidth = clientRect.right - BUTTON_AREA_WIDTH;
 
         switch (LOWORD(wParam)) {
-        // case 1: {
-        //     state.points.clear();
-        //     wchar_t text[32];
-        //     for (int i = 0; i < 6; i++) {
-        //         float x = 0, y = 0;
-        //         GetWindowTextW(hEditX[i], text, 32);
-        //         x = _wtof(text);
-        //         GetWindowTextW(hEditY[i], text, 32);
-        //         y = _wtof(text);
-        //         state.points.emplace_back(x, y); // Remove Y inversion
-        //     }
-        //     break;
-        // }
+            // case 1: {
+            //     state.points.clear();
+            //     wchar_t text[32];
+            //     for (int i = 0; i < 6; i++) {
+            //         float x = 0, y = 0;
+            //         GetWindowTextW(hEditX[i], text, 32);
+            //         x = _wtof(text);
+            //         GetWindowTextW(hEditY[i], text, 32);
+            //         y = _wtof(text);
+            //         state.points.emplace_back(x, y); // Remove Y inversion
+            //     }
+            //     break;
+            // }
         case BUTTON_RESET:
             state.offsetX = plotWidth / 2.0f;
             state.offsetY = clientRect.bottom / 2.0f;
             state.scale = INITIAL_SCALE;
             break;
 
-        case 2:
+        case BUTTON_ZOOMIN:
             state.scale *= ZOOM_FACTOR;
             break;
 
-        case 3:
+        case BUTTON_ZOOMOUT:
             state.scale /= ZOOM_FACTOR;
             break;
         case BUTTON_ADDLINE:
@@ -806,11 +857,139 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 InvalidateRect(hwnd, NULL, TRUE);
             }
             break;
+
+        case BUTTON_SHOW:
+            g_lines.clear(); // Clear previous lines
+
+            // ввод и валидация условий
+            // ================================
+            HWND hConditionsPanel = GetDlgItem(hwnd, CONDITIONS_PANEL);
+            if (!hConditionsPanel) break;
+
+            ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(hConditionsPanel, GWLP_USERDATA);
+            if (!pCondData) break;
+
+            bool allValid = true;
+
+            wchar_t bufferX[32], bufferY[32], bufferVal[32];
+
+            // first row
+            // x y
+            HWND hEditX = pCondData->childControls[1];
+            HWND hEditY = pCondData->childControls[3];
+
+            GetWindowTextW(hEditX, bufferX, 32);
+            GetWindowTextW(hEditY, bufferY, 32);
+
+            if (!IsValidNumber(bufferX) || !IsValidNumber(bufferY)) {
+                allValid = false;
+
+                std::wstring msg = L"Некорректно введены условия.\nПроверьте что:\n1. Все поля заполнены\n2. Введены числа";
+                ShowErrorMessage(hwnd, msg.c_str());
+
+                return 0;
+            }
+
+            // line conditions
+            // x y sign val
+            for (int i = 0; i < LINES; ++i) {
+                int baseIndex = 4 + 5 * i;
+                // vactor<int> rowData = {1,3,6};
+                HWND hEditXCond = pCondData->childControls[baseIndex + 1];
+                HWND hEditYCond = pCondData->childControls[baseIndex + 3];
+                // HWND hEditSign = pCondData->childControls[baseIndex + 3];
+                HWND hEditVal = pCondData->childControls[baseIndex + 6];
+
+                GetWindowTextW(hEditXCond, bufferX, 32);
+                GetWindowTextW(hEditYCond, bufferY, 32);
+                GetWindowTextW(hEditVal, bufferVal, 32);
+
+                if (!IsValidNumber(bufferX) || !IsValidNumber(bufferY) || !IsValidNumber(bufferVal)) {
+                    std::wstring msg = L"Некорректно введены условия.\nПроверьте что:\n1. Все поля заполнены\n2. Введены числа";
+                    ShowErrorMessage(hwnd, msg.c_str());
+
+                    return 0;
+                }
+
+                float x = _wtof(bufferX);
+                float y = _wtof(bufferY);
+                float val = _wtof(bufferVal);
+            }
+
+
+            // ввод и валидация точек
+            // ================================
+            HWND hPointsPanel = GetDlgItem(hwnd, POINTS_PANEL);
+            if (!hPointsPanel) break;
+
+            PointsPanelData* pPointsData = (PointsPanelData*)GetWindowLongPtr(hPointsPanel, GWLP_USERDATA);
+            if (!pPointsData) break;
+
+            allValid = true;
+            int invalidLine = -1;
+
+            for (int i = 0; i < LINES; ++i) {
+                int baseIndex = 4 + 5 * i;
+                if (baseIndex + 3 >= pPointsData->childControls.size()) break;
+
+                HWND hEditX1 = pPointsData->childControls[baseIndex + 1];
+                HWND hEditY1 = pPointsData->childControls[baseIndex + 2];
+                HWND hEditX2 = pPointsData->childControls[baseIndex + 3];
+                HWND hEditY2 = pPointsData->childControls[baseIndex + 4];
+
+                wchar_t bufferX1[32], bufferY1[32], bufferX2[32], bufferY2[32];
+                // float x1 = 0.0f, y1 = 0.0f, x2 = 0.0f, y2 = 0.0f;
+
+                GetWindowTextW(hEditX1, bufferX1, 32);
+                GetWindowTextW(hEditY1, bufferY1, 32);
+                GetWindowTextW(hEditX2, bufferX2, 32);
+                GetWindowTextW(hEditY2, bufferY2, 32);
+
+                // std::wstring msg = L"Прямая " + std::to_wstring(i+1) + 
+                //                        L".\nТочки: (" + bufferX1 + L", " + bufferY1 + L") и (" + bufferX2 + L", " + bufferY2 + L")";
+                // ShowErrorMessage(hwnd, msg.c_str());
+
+                // Check all fields are filled with valid numbers
+                if (!IsValidNumber(bufferX1) || !IsValidNumber(bufferY1) ||
+                    !IsValidNumber(bufferX2) || !IsValidNumber(bufferY2)) {
+                    allValid = false;
+                    invalidLine = i + 1;
+                    break;
+                }
+
+                float x1 = _wtof(bufferX1);
+                float y1 = _wtof(bufferY1);
+                float x2 = _wtof(bufferX2);
+                float y2 = _wtof(bufferY2);
+
+                // Check if points are different (valid line)
+                if (x1 == x2 && y1 == y2) {
+                    allValid = false;
+                    invalidLine = i + 1;
+                    break;
+                }
+
+                g_lines.push_back({ x1, y1, x2, y2 });
+            }
+
+            if (!allValid) {
+                if (invalidLine != -1) {
+                    std::wstring msg = L"Некорректные данные для прямой " + std::to_wstring(invalidLine) +
+                        L".\nПроверьте что:\n1. Все поля заполнены\n2. Введены числа\n3. Точки не совпадают";
+                    ShowErrorMessage(hwnd, msg.c_str());
+                }
+                g_lines.clear(); // Don't draw anything if validation failed
+            }
+
+            InvalidateRect(hwnd, NULL, TRUE);
+            break;
         }
+
+
         InvalidateRect(hwnd, NULL, TRUE);
         return 0;
     }
-    // нажатие ЛКМ
+                   // нажатие ЛКМ
     case WM_LBUTTONDOWN: {
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         RECT plotArea;
@@ -823,7 +1002,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         return 0;
     }
-    // перемещение мыши
+                       // перемещение мыши
     case WM_MOUSEMOVE:
         if (state.isDragging) {
             int dx = GET_X_LPARAM(lParam) - state.dragStart.x;
@@ -838,12 +1017,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             InvalidateRect(hwnd, NULL, FALSE);
         }
         return 0;
-    // отжатие кнопки
+        // отжатие кнопки
     case WM_LBUTTONUP:
         state.isDragging = false;
         ReleaseCapture();
         return 0;
-    // закрытие окна
+        // закрытие окна
     case WM_DESTROY: {
         DeleteObject(hBackgroundBrush);
         GdiplusShutdown(gdiplusToken);
@@ -936,15 +1115,15 @@ void DrawInfiniteGrid(HWND hwnd, Graphics& graphics, float offsetX, float offset
     float endX = ceil(right / GRID_STEP) * GRID_STEP;
     for (float x = startX; x <= endX; x += GRID_STEP) {
         int screenX = BUTTON_AREA_WIDTH + static_cast<int>(x * scale + offsetX);
-        graphics.DrawLine(&gridPen, screenX, plotArea.top, screenX, plotArea.bottom-35);
+        graphics.DrawLine(&gridPen, screenX, plotArea.top, screenX, plotArea.bottom - 35);
     }
 
     // горизонтальные линии
     float startY = floor(top / GRID_STEP) * GRID_STEP;
     float endY = ceil(bottom / GRID_STEP) * GRID_STEP;
-    for (float y = startY; y <= endY-1; y += GRID_STEP) {
+    for (float y = startY; y <= endY - 1; y += GRID_STEP) {
         int screenY = static_cast<int>(y * scale + offsetY);
-        graphics.DrawLine(&gridPen, BUTTON_AREA_WIDTH+25, screenY, plotArea.right, screenY);
+        graphics.DrawLine(&gridPen, BUTTON_AREA_WIDTH + 25, screenY, plotArea.right, screenY);
     }
 }
 
@@ -971,12 +1150,13 @@ void DrawLineHatched(HWND hwnd, Graphics& graphics, float x1, float y1, float x2
     // 3. Use your proven infinite line algorithm
     PointF p1(x1, y1), p2(x2, y2);
     float dx = p2.X - p1.X;
-    
+
     if (fabs(dx) < 1e-6) { // Vertical line
         int screenX = WorldToScreenX(p1.X, state.offsetX, state.scale);
         if (screenX < plotArea.left || screenX > plotArea.right) return;
         graphics.DrawLine(&linePen, screenX, plotArea.top, screenX, plotArea.bottom);
-    } else {
+    }
+    else {
         float m = (p2.Y - p1.Y) / dx;
         float b = p1.Y - m * p1.X;
 
@@ -997,7 +1177,7 @@ void DrawLineHatched(HWND hwnd, Graphics& graphics, float x1, float y1, float x2
         // 4. Clip before drawing
         if (x1 > plotArea.right && x2 > plotArea.right) return;
         if (x1 < plotArea.left && x2 < plotArea.left) return;
-        
+
         graphics.DrawLine(&linePen, x1, y1, x2, y2);
     }
 }
@@ -1061,42 +1241,42 @@ void DrawAxesWithLabels(Graphics& graphics, float offsetX, float offsetY, float 
     const int X_LABEL_Y = plotArea.bottom - BOTTOM_MARGIN + LABEL_OFFSET;
     float worldLeftX = ScreenToWorldX(adjustedPlotArea.left, offsetX, scale);
     float worldRightX = ScreenToWorldX(adjustedPlotArea.right, offsetX, scale);
-    
+
     float xStart = floor(worldLeftX / GRID_STEP) * GRID_STEP;
     float xEnd = ceil(worldRightX / GRID_STEP) * GRID_STEP;
-    
+
     for (float x = xStart; x <= xEnd; x += GRID_STEP) {
         int screenX = WorldToScreenX(x, offsetX, scale);
         if (screenX < adjustedPlotArea.left || screenX > adjustedPlotArea.right) continue;
-        
+
         std::wstring text = std::to_wstring(static_cast<int>(x));
         // Center-align the text under the grid line
         graphics.DrawString(text.c_str(), -1, &font,
-            PointF(screenX - 10, X_LABEL_Y), &textBrush);
+            PointF(screenX - 6, X_LABEL_Y), &textBrush);
     }
 
     // Y-axis labels (positioned right of left margin)
     const int Y_LABEL_X = plotArea.left + LEFT_MARGIN - LABEL_OFFSET - 15;
     float worldTopY = ScreenToWorldY(adjustedPlotArea.top, offsetY, scale);
     float worldBottomY = ScreenToWorldY(adjustedPlotArea.bottom, offsetY, scale);
-    
+
     float yStart = floor(worldTopY / GRID_STEP) * GRID_STEP;
     float yEnd = ceil(worldBottomY / GRID_STEP) * GRID_STEP;
-    
+
     for (float y = yStart; y <= yEnd; y += GRID_STEP) {
         int screenY = WorldToScreenY(y, offsetY, scale);
         if (screenY < adjustedPlotArea.top || screenY > adjustedPlotArea.bottom) continue;
-        
+
         std::wstring text = std::to_wstring(static_cast<int>(-y));
         // Vertically center-align the text
         graphics.DrawString(text.c_str(), -1, &font,
-            PointF(Y_LABEL_X, screenY - 8), &textBrush);
+            PointF(Y_LABEL_X + 12, screenY - 8), &textBrush);
     }
 
     // Draw axis lines within adjusted plot area
     int screenY0 = WorldToScreenY(0, offsetY, scale);
     if (screenY0 >= adjustedPlotArea.top && screenY0 <= adjustedPlotArea.bottom) {
-        graphics.DrawLine(&axisPen, 
+        graphics.DrawLine(&axisPen,
             adjustedPlotArea.left, screenY0,
             adjustedPlotArea.right, screenY0);
     }
