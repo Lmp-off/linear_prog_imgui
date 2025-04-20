@@ -21,7 +21,7 @@ using namespace Gdiplus;
 // размеры окна
 #define MIN_WIDTH 1024
 #define MIN_HEIGHT 768
-#define LEFT_GROUPBOX_WIDTH 380
+#define LEFT_GROUPBOX_WIDTH 320
 
 // константы
 const int BUTTON_AREA_WIDTH = 400;
@@ -36,6 +36,7 @@ enum ElementId {
     BUTTON_ZOOMOUT,
     BUTTON_ADDLINE,
     BUTTON_REMOVELINE,
+    BUTTON_SHOW,
     CONDITIONS_PANEL,
     POINTS_PANEL,
 
@@ -89,15 +90,18 @@ void UpdateScrollInfo(HWND hwnd, ConditionsPanelData* pData) {
 }
 
 void UpdateTotalHeight(ConditionsPanelData* pData) {
-    int height = pData->lineHeights[LINES+1];
-    pData->totalHeight = height + 30;
+    pData->totalHeight = 0;
+    for (int i = 0; i <= LINES; ++i) { // Учитываем текущее количество линий
+        if (i < pData->lineHeights.size()) {
+            pData->totalHeight += pData->lineHeights[i] + 5;
+        }
+    }
+    pData->totalHeight += 10; // Добавляем отступ
 
-    for (int i = 0; i < 10; ++i) {
-        if (i < LINES) continue;
-        else
-            for (int j = 7*i; j < pData->childControls.size(); ++j) {
-                ShowWindow(pData->childControls[j+5], SW_HIDE);
-            }
+    // Скрываем лишние элементы
+    for (size_t j = 0; j < pData->childControls.size(); ++j) {
+        int line = (j < 5) ? 0 : ((j - 5) / 7) + 1; // Расчет принадлежности к линии
+        ShowWindow(pData->childControls[j], (line <= LINES) ? SW_SHOW : SW_HIDE);
     }
 }
 
@@ -107,7 +111,7 @@ void condInit(HWND hPanel, ConditionsPanelData* pData) {
     const int lineSpacing = 5;
 
     // X positions for controls in a line (L=0, Edit1=20, x+=84, Edit2=104, y->max=168)
-    const int xPositions[] = {0, 20, 82, 100, 162, 178, 204};
+    const int xPositions[] = {10, 30, 92, 110, 172, 188, 214};
     const int widths[] = {20, 60, 20, 60, 20, 20, 60};
 
     // first row
@@ -318,16 +322,20 @@ void UpdateScrollInfo(HWND hwnd, PointsPanelData* pData) {
     SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
 }
 
-void UpdateTotalHeight(PointsPanelData* pData) {
-    int height = pData->lineHeights[LINES+1];
-    pData->totalHeight = height + 30;
 
-    for (int i = 0; i < 10; ++i) {
-        if (i < LINES) continue;
-        else
-            for (int j = 5*i; j < pData->childControls.size(); ++j) {
-                ShowWindow(pData->childControls[j+4], SW_HIDE);
-            }
+void UpdateTotalHeight(PointsPanelData* pData) {
+    pData->totalHeight = 0;
+    for (int i = 0; i <= LINES; ++i) { // Учитываем текущее количество линий
+        if (i < pData->lineHeights.size()) {
+            pData->totalHeight += pData->lineHeights[i] + 5;
+        }
+    }
+    pData->totalHeight += 10; // Добавляем отступ
+
+    // Скрываем лишние элементы
+    for (size_t j = 0; j < pData->childControls.size(); ++j) {
+        int line = (j < 4) ? 0 : ((j - 4) / 5) + 1; // Расчет принадлежности к линии
+        ShowWindow(pData->childControls[j], (line <= LINES) ? SW_SHOW : SW_HIDE);
     }
 }
 
@@ -369,13 +377,13 @@ void pointsInit(HWND hPanel, PointsPanelData* pData) {
     const int lineSpacing = 5;
 
     HWND hStatic1 = CreateWindow(L"STATIC", L"x1", WS_VISIBLE | WS_CHILD,
-        100, 0, 20, 20, hPanel, NULL, NULL, NULL);
+        110, 0, 20, 20, hPanel, NULL, NULL, NULL);
     HWND hStatic2 = CreateWindow(L"STATIC", L"y1", WS_VISIBLE | WS_CHILD,
-        140, 0, 20, 20, hPanel, NULL, NULL, NULL);
+        150, 0, 20, 20, hPanel, NULL, NULL, NULL);
     HWND hStatic3 = CreateWindow(L"STATIC", L"x2", WS_VISIBLE | WS_CHILD,
-        180, 0, 20, 20, hPanel, NULL, NULL, NULL);
+        190, 0, 20, 20, hPanel, NULL, NULL, NULL);
     HWND hStatic4 = CreateWindow(L"STATIC", L"y2", WS_VISIBLE | WS_CHILD,
-        220, 0, 20, 20, hPanel, NULL, NULL, NULL);
+        230, 0, 20, 20, hPanel, NULL, NULL, NULL);
     HWND lineControls[] = {hStatic1, hStatic2, hStatic3, hStatic4};
     int maxHeight = 0;
     for (HWND hCtrl : lineControls) {
@@ -386,10 +394,10 @@ void pointsInit(HWND hPanel, PointsPanelData* pData) {
     }
     pData->lineHeights.push_back(maxHeight);
 
-    const int xPositions[] = {0, 90, 130, 170, 210};
+    const int xPositions[] = {10, 100, 140, 180, 220};
     const int widths[] = {80, 40, 40, 40, 40};
 
-    for (int lineIdx = 0; lineIdx < LINES; ++lineIdx) {
+    for (int lineIdx = 0; lineIdx < 10; ++lineIdx) {
         std::wstring label = L"Прямая " + std::to_wstring(lineIdx+1) + L":";
         HWND hStatic = CreateWindow(L"STATIC", label.c_str(), WS_VISIBLE | WS_CHILD,
             xPositions[0], yPos, widths[0], 20, hPanel, NULL, NULL, NULL);
@@ -419,7 +427,8 @@ void pointsInit(HWND hPanel, PointsPanelData* pData) {
         yPos += maxHeight + lineSpacing;
     }
     pData->totalHeight = yPos;
-    // Update scroll info (similar to ConditionsPanel)
+
+    UpdateTotalHeight(pData);
 }
 
 // Add new window procedure for Points Panel
@@ -557,10 +566,10 @@ bool init(HWND hwnd) {
 
     // кнопки управления прямыми
     CreateWindow(L"BUTTON", L"Добавить", WS_VISIBLE | WS_CHILD,
-        230, 20, 70, 24,
+        170, 20, 70, 24,
         hwnd, (HMENU)BUTTON_ADDLINE, NULL, NULL);
     CreateWindow(L"BUTTON", L"Удалить", WS_VISIBLE | WS_CHILD,
-        310, 20, 70, 24,
+        250, 20, 70, 24,
         hwnd, (HMENU)BUTTON_REMOVELINE, NULL, NULL);
 
     // условие
@@ -596,6 +605,11 @@ bool init(HWND hwnd) {
         GetModuleHandle(NULL),
         NULL
     );
+
+    // кнопка построения
+    CreateWindow(L"BUTTON", L"Построить прямые", WS_VISIBLE | WS_CHILD,
+        20, 320, 200, 30,
+        hwnd, (HMENU)BUTTON_SHOW, NULL, NULL);
 
     return true;
 }
@@ -733,7 +747,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         //     }
         //     break;
         // }
-        case 1:
+        case BUTTON_RESET:
             state.offsetX = plotWidth / 2.0f;
             state.offsetY = clientRect.bottom / 2.0f;
             state.scale = INITIAL_SCALE;
@@ -745,6 +759,52 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         case 3:
             state.scale /= ZOOM_FACTOR;
+            break;
+        case BUTTON_ADDLINE:
+            if (LINES < 10) {
+                LINES++;
+                // Обновляем обе панели
+                HWND hConditionsPanel = GetDlgItem(hwnd, CONDITIONS_PANEL);
+                ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(hConditionsPanel, GWLP_USERDATA);
+                if (pCondData) {
+                    UpdateTotalHeight(pCondData);
+                    UpdateScrollInfo(hConditionsPanel, pCondData);
+                    RepositionChildren(hConditionsPanel, pCondData);
+                }
+
+                HWND hPointsPanel = GetDlgItem(hwnd, POINTS_PANEL);
+                PointsPanelData* pPointsData = (PointsPanelData*)GetWindowLongPtr(hPointsPanel, GWLP_USERDATA);
+                if (pPointsData) {
+                    UpdateTotalHeight(pPointsData);
+                    UpdateScrollInfo(hPointsPanel, pPointsData);
+                    RepositionChildren(hPointsPanel, pPointsData);
+                }
+                InvalidateRect(hwnd, NULL, TRUE);
+            }
+            break;
+
+        case BUTTON_REMOVELINE:
+            if (LINES > 3) {
+                LINES--;
+                // Обновляем панель условий
+                HWND hConditionsPanel = GetDlgItem(hwnd, CONDITIONS_PANEL);
+                ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(hConditionsPanel, GWLP_USERDATA);
+                if (pCondData) {
+                    UpdateTotalHeight(pCondData);
+                    UpdateScrollInfo(hConditionsPanel, pCondData);
+                    RepositionChildren(hConditionsPanel, pCondData);
+                }
+
+                // Скрываем лишние элементы в панели точек
+                HWND hPointsPanel = GetDlgItem(hwnd, POINTS_PANEL);
+                PointsPanelData* pPointsData = (PointsPanelData*)GetWindowLongPtr(hPointsPanel, GWLP_USERDATA);
+                if (pPointsData) {
+                    UpdateTotalHeight(pPointsData);
+                    UpdateScrollInfo(hPointsPanel, pPointsData);
+                    RepositionChildren(hPointsPanel, pPointsData);
+                }
+                InvalidateRect(hwnd, NULL, TRUE);
+            }
             break;
         }
         InvalidateRect(hwnd, NULL, TRUE);
