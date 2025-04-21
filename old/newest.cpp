@@ -109,38 +109,40 @@ struct ConditionsPanelData {
     int totalHeight;
     std::vector<HWND> childControls;  // Child windows
     std::vector<int> lineHeights;     // Height of each line
+    std::vector<std::wstring> signs;  // Signs
 };
+static ConditionsPanelData pCondData;
 
-void UpdateScrollInfo(HWND hwnd, ConditionsPanelData* pData) {
+void UpdateScrollInfo(HWND hwnd) {
     SCROLLINFO si = { sizeof(SCROLLINFO) };
     si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
     RECT rc;
     GetClientRect(hwnd, &rc);
     si.nMin = 0;
-    si.nMax = pData->totalHeight;
+    si.nMax = pCondData.totalHeight;
     si.nPage = rc.bottom;
-    si.nPos = pData->scrollPos;
+    si.nPos = pCondData.scrollPos;
     SetScrollInfo(hwnd, SB_VERT, &si, TRUE);
 }
 
-void UpdateTotalHeight(ConditionsPanelData* pData) {
-    pData->totalHeight = 0;
+void UpdateTotalHeight() {
+    pCondData.totalHeight = 0;
     for (int i = 0; i <= LINES; ++i) { // Учитываем текущее количество линий
-        if (i < pData->lineHeights.size()) {
-            pData->totalHeight += pData->lineHeights[i] + 5;
+        if (i < pCondData.lineHeights.size()) {
+            pCondData.totalHeight += pCondData.lineHeights[i] + 5;
         }
     }
-    pData->totalHeight += 10; // Добавляем отступ
+    pCondData.totalHeight += 10; // Добавляем отступ
 
     // Скрываем лишние элементы
-    for (size_t j = 0; j < pData->childControls.size(); ++j) {
+    for (size_t j = 0; j < pCondData.childControls.size(); ++j) {
         int line = (j < 5) ? 0 : ((j - 5) / 7) + 1; // Расчет принадлежности к линии
-        ShowWindow(pData->childControls[j], (line <= LINES) ? SW_SHOW : SW_HIDE);
+        ShowWindow(pCondData.childControls[j], (line <= LINES) ? SW_SHOW : SW_HIDE);
     }
 }
 
 // Modified condInit to track control heights
-void condInit(HWND hPanel, ConditionsPanelData* pData) {
+void condInit(HWND hPanel) {
     int yPos = 10;
     const int lineSpacing = 5;
 
@@ -169,13 +171,13 @@ void condInit(HWND hPanel, ConditionsPanelData* pData) {
     HWND lineControls[] = { hStatic1, hEdit1, hStatic2, hEdit2, hStatic3 };
 
     for (HWND hCtrl : lineControls) {
-        pData->childControls.push_back(hCtrl);
+        pCondData.childControls.push_back(hCtrl);
         RECT rc;
         GetWindowRect(hCtrl, &rc);
         maxHeight = max(maxHeight, rc.bottom - rc.top);
     }
 
-    pData->lineHeights.push_back(maxHeight);
+    pCondData.lineHeights.push_back(maxHeight);
 
     // lines
     for (int lineIdx = 0; lineIdx < 10; ++lineIdx) {
@@ -201,41 +203,43 @@ void condInit(HWND hPanel, ConditionsPanelData* pData) {
         HWND hButton1 = CreateWindow(L"BUTTON", L"<=", WS_VISIBLE | WS_CHILD,
             xPositions[5], yPos, widths[5], 20, hPanel, (HMENU)(BUTTON_SIGN + lineIdx), NULL, NULL);
 
+        pCondData.signs.push_back(L"<=");
+
         HWND hEdit3 = CreateWindow(L"EDIT", L"", WS_VISIBLE | WS_CHILD | WS_BORDER,
             xPositions[6], yPos, widths[6], 20, hPanel, NULL, NULL, NULL);
 
         // Store controls and calculate line height
         HWND lineControls[] = { hStatic0, hEdit1, hStatic1, hEdit2, hStatic2, hButton1, hEdit3 };
         for (HWND hCtrl : lineControls) {
-            pData->childControls.push_back(hCtrl);
+            pCondData.childControls.push_back(hCtrl);
             RECT rc;
             GetWindowRect(hCtrl, &rc);
             maxHeight = max(maxHeight, rc.bottom - rc.top);
         }
 
-        pData->lineHeights.push_back(maxHeight);
+        pCondData.lineHeights.push_back(maxHeight);
         yPos += maxHeight + lineSpacing;
     }
 
-    pData->totalHeight = yPos;
-    UpdateScrollInfo(hPanel, pData);
+    pCondData.totalHeight = yPos;
+    UpdateScrollInfo(hPanel);
 
-    UpdateTotalHeight(pData);
+    UpdateTotalHeight();
 }
 
 
 
-void RepositionChildren(HWND hwnd, ConditionsPanelData* pData) {
-    int yPos = 10 - pData->scrollPos;
+void RepositionChildren(HWND hwnd) {
+    int yPos = 10 - pCondData.scrollPos;
     size_t controlIdx = 0;
 
     int counter = 0;
 
-    for (int lineHeight : pData->lineHeights) {
+    for (int lineHeight : pCondData.lineHeights) {
         // Process lines
         for (int i = 0; i < (counter ? 7 : 5); ++i) {
-            if (controlIdx >= pData->childControls.size()) break;
-            HWND hChild = pData->childControls[controlIdx];
+            if (controlIdx >= pCondData.childControls.size()) break;
+            HWND hChild = pCondData.childControls[controlIdx];
 
             // Get original X position and width
             RECT rc;
@@ -262,11 +266,11 @@ LRESULT CALLBACK ConditionsPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
     switch (msg) {
     case WM_CREATE: {
-        pData = new ConditionsPanelData();
-        pData->scrollPos = 0;
-        pData->totalHeight = 0;
+        // pData = new ConditionsPanelData();
+        pCondData.scrollPos = 0;
+        pCondData.totalHeight = 0;
         SetWindowLongPtr(hwnd, GWLP_USERDATA, (LONG_PTR)pData);
-        condInit(hwnd, pData);
+        condInit(hwnd);
         break;
     }
 
@@ -280,8 +284,8 @@ LRESULT CALLBACK ConditionsPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPAR
 
     case WM_SIZE: {
         if (pData) {
-            UpdateScrollInfo(hwnd, pData);
-            RepositionChildren(hwnd, pData);
+            UpdateScrollInfo(hwnd);
+            RepositionChildren(hwnd);
         }
         break;
     }
@@ -784,6 +788,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         GetClientRect(hwnd, &clientRect);
         int plotWidth = clientRect.right - BUTTON_AREA_WIDTH;
 
+        // Handle sign toggle
+        if (LOWORD(wParam) >= BUTTON_SIGN && LOWORD(wParam) <= BUTTON_SIGN + 9) {
+            int lineIdx = LOWORD(wParam) - BUTTON_SIGN;
+            HWND hButton = (HWND)lParam;
+            // ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(
+            //     GetDlgItem(hwnd, CONDITIONS_PANEL), GWLP_USERDATA);
+            
+            if (lineIdx < pCondData.signs.size()) {
+                if (pCondData.signs[lineIdx] == L"<=") {
+                    pCondData.signs[lineIdx] = L">=";
+                    SetWindowTextW(hButton, L">=");
+                } else {
+                    pCondData.signs[lineIdx] = L"<=";
+                    SetWindowTextW(hButton, L"<=");
+                }
+            }
+            return 0;
+        }
+
         switch (LOWORD(wParam)) {
             // case 1: {
             //     state.points.clear();
@@ -816,12 +839,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 LINES++;
                 // Обновляем обе панели
                 HWND hConditionsPanel = GetDlgItem(hwnd, CONDITIONS_PANEL);
-                ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(hConditionsPanel, GWLP_USERDATA);
-                if (pCondData) {
-                    UpdateTotalHeight(pCondData);
-                    UpdateScrollInfo(hConditionsPanel, pCondData);
-                    RepositionChildren(hConditionsPanel, pCondData);
-                }
+                // ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(hConditionsPanel, GWLP_USERDATA);
+                // if (pCondData) {
+                    UpdateTotalHeight();
+                    UpdateScrollInfo(hConditionsPanel);
+                    RepositionChildren(hConditionsPanel);
+                // }
 
                 HWND hPointsPanel = GetDlgItem(hwnd, POINTS_PANEL);
                 PointsPanelData* pPointsData = (PointsPanelData*)GetWindowLongPtr(hPointsPanel, GWLP_USERDATA);
@@ -839,12 +862,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 LINES--;
                 // Обновляем панель условий
                 HWND hConditionsPanel = GetDlgItem(hwnd, CONDITIONS_PANEL);
-                ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(hConditionsPanel, GWLP_USERDATA);
-                if (pCondData) {
-                    UpdateTotalHeight(pCondData);
-                    UpdateScrollInfo(hConditionsPanel, pCondData);
-                    RepositionChildren(hConditionsPanel, pCondData);
-                }
+                // ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(hConditionsPanel, GWLP_USERDATA);
+                // if (pCondData) {
+                    UpdateTotalHeight();
+                    UpdateScrollInfo(hConditionsPanel);
+                    RepositionChildren(hConditionsPanel);
+                // }
 
                 // Скрываем лишние элементы в панели точек
                 HWND hPointsPanel = GetDlgItem(hwnd, POINTS_PANEL);
@@ -866,17 +889,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             HWND hConditionsPanel = GetDlgItem(hwnd, CONDITIONS_PANEL);
             if (!hConditionsPanel) break;
 
-            ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(hConditionsPanel, GWLP_USERDATA);
-            if (!pCondData) break;
+            // ConditionsPanelData* pCondData = (ConditionsPanelData*)GetWindowLongPtr(hConditionsPanel, GWLP_USERDATA);
+            // if (!pCondData) break;
 
             bool allValid = true;
 
-            wchar_t bufferX[32], bufferY[32], bufferVal[32];
+            wchar_t bufferX[32], bufferY[32], bufferVal[32], signText[3];
 
             // first row
             // x y
-            HWND hEditX = pCondData->childControls[1];
-            HWND hEditY = pCondData->childControls[3];
+            HWND hEditX = pCondData.childControls[1];
+            HWND hEditY = pCondData.childControls[3];
 
             GetWindowTextW(hEditX, bufferX, 32);
             GetWindowTextW(hEditY, bufferY, 32);
@@ -893,19 +916,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             // line conditions
             // x y sign val
             for (int i = 0; i < LINES; ++i) {
-                int baseIndex = 4 + 5 * i;
+                int baseIndex = 5 + 7 * i;
                 // vactor<int> rowData = {1,3,6};
-                HWND hEditXCond = pCondData->childControls[baseIndex + 1];
-                HWND hEditYCond = pCondData->childControls[baseIndex + 3];
-                // HWND hEditSign = pCondData->childControls[baseIndex + 3];
-                HWND hEditVal = pCondData->childControls[baseIndex + 6];
+                HWND hEditXCond = pCondData.childControls[baseIndex + 1];
+                HWND hEditYCond = pCondData.childControls[baseIndex + 3];
+                HWND hButtonSign = pCondData->childControls[baseIndex + 5];
+                HWND hEditVal = pCondData.childControls[baseIndex + 6];
 
                 GetWindowTextW(hEditXCond, bufferX, 32);
                 GetWindowTextW(hEditYCond, bufferY, 32);
                 GetWindowTextW(hEditVal, bufferVal, 32);
+                GetWindowTextW(hButtonSign, signText, 3);
+
+                // std::wstring msg = L"Значения условия: " + 
+                //     std::to_wstring(_wtof(bufferX)) + L", " + std::to_wstring(_wtof(bufferY)) + L", " + std::to_wstring(_wtof(bufferVal));
+                // ShowErrorMessage(hwnd, msg.c_str());
 
                 if (!IsValidNumber(bufferX) || !IsValidNumber(bufferY) || !IsValidNumber(bufferVal)) {
-                    std::wstring msg = L"Некорректно введены условия.\nПроверьте что:\n1. Все поля заполнены\n2. Введены числа";
+                    std::wstring msg = L"Некорректно введены условия для прямых.\nПроверьте что:\n1. Все поля заполнены\n2. Введены числа";
                     ShowErrorMessage(hwnd, msg.c_str());
 
                     return 0;
@@ -914,6 +942,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 float x = _wtof(bufferX);
                 float y = _wtof(bufferY);
                 float val = _wtof(bufferVal);
+                bool isLessOrEqual = (wcscmp(signText, L"<=") == 0);
             }
 
 
