@@ -145,11 +145,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="app_state.cpp" />
+    <ClCompile Include="graphics.cpp" />
     <ClCompile Include="gui_components.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="app_state.h" />
+    <ClInclude Include="graphics.h" />
     <ClInclude Include="gui_components.h" />
     <ClInclude Include="resources.h" />
   </ItemGroup>
