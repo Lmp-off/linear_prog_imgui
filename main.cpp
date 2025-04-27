@@ -3,6 +3,7 @@
 
 #include "resources.h"
 #include "app_state.h"
+#include "gui_components.h"
 
 const wchar_t CLASS_NAME[] = L"MainWindowClass";
 
@@ -11,6 +12,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE:
         AppState::Initialize();
+        CreateMainControls(hwnd);
         break;
     case WM_DESTROY:
         AppState::Shutdown();
