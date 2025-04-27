@@ -6,7 +6,7 @@ namespace AppState {
     std::vector<std::pair<float, float>> lines;
 
     void Initialize() {
-        hBackgroundBrush = CreateSolidBrush(RGB(240, 240, 240));
+        hBackgroundBrush = CreateSolidBrush(RGB(212, 208, 200));
     }
 
     void Shutdown() {

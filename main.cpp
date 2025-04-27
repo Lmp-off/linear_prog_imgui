@@ -1,5 +1,10 @@
 ﻿// main.cpp
 #include <windows.h>
+#include <commctrl.h>
+#include <uxtheme.h>
+
+#pragma comment(lib, "comctl32.lib")
+#pragma comment(linker,"/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 #include "resources.h"
 #include "app_state.h"
@@ -24,6 +29,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         EndPaint(hwnd, &ps);
         break;
     }
+    case WM_CTLCOLORSTATIC: {
+        HDC hdcStatic = (HDC)wParam;
+        SetBkColor(hdcStatic, RGB(212, 208, 200));
+        return (LRESULT)AppState::hBrushBackground;
+    }
     case WM_COMMAND:
         HandleCommand(hwnd, wParam);
         break;
@@ -40,6 +50,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 // точка входа
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     LPSTR lpCmdLine, int nCmdShow) {
+    // Initialize common controls
+    INITCOMMONCONTROLSEX icc;
+    icc.dwSize = sizeof(INITCOMMONCONTROLSEX);
+    icc.dwICC = ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES;
+    InitCommonControlsEx(&icc);
     // Register window class
     WNDCLASS wc = {};
     wc.lpfnWndProc = WndProc;
