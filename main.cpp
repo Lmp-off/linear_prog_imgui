@@ -1,13 +1,19 @@
 ﻿// main.cpp
 #include <windows.h>
+
 #include "resources.h"
+#include "app_state.h"
 
 const wchar_t CLASS_NAME[] = L"MainWindowClass";
 
 // обработка событий окна
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
+    case WM_CREATE:
+        AppState::Initialize();
+        break;
     case WM_DESTROY:
+        AppState::Shutdown();
         PostQuitMessage(0);
         return 0;
     default:
