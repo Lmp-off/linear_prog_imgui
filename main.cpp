@@ -5,6 +5,7 @@
 #include "app_state.h"
 #include "gui_components.h"
 #include "graphics.h"
+#include "commands.h"
 
 const wchar_t CLASS_NAME[] = L"MainWindowClass";
 
@@ -23,6 +24,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         EndPaint(hwnd, &ps);
         break;
     }
+    case WM_COMMAND:
+        HandleCommand(hwnd, wParam);
+        break;
     case WM_DESTROY:
         ShutdownGraphics();
         AppState::Shutdown();
