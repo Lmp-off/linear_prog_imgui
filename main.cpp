@@ -1,21 +1,23 @@
-// main.cpp
+﻿// main.cpp
 #include <windows.h>
 #include "resources.h"
 
 const wchar_t CLASS_NAME[] = L"MainWindowClass";
 
+// обработка событий окна
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
-        default:
-            return DefWindowProc(hwnd, msg, wParam, lParam);
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    default:
+        return DefWindowProc(hwnd, msg, wParam, lParam);
     }
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
-                   LPSTR lpCmdLine, int nCmdShow) {
+// точка входа
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
+    LPSTR lpCmdLine, int nCmdShow) {
     // Register window class
     WNDCLASS wc = {};
     wc.lpfnWndProc = WndProc;
