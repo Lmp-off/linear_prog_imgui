@@ -17,6 +17,9 @@ void DrawScene(HWND hwnd, HDC hdc) {
     RECT rc;
     GetClientRect(hwnd, &rc);
 
-    // Draw background
+    // Фон
     FillRect(hdc, &rc, AppState::hBackgroundBrush);
+
+    // Отрисовка
+    Rectangle(hdc, 100, 100, 200, 200);
 }

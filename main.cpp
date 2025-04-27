@@ -16,6 +16,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         InitializeGraphics();
         CreateMainControls(hwnd);
         break;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        DrawScene(hwnd, hdc);
+        EndPaint(hwnd, &ps);
+        break;
+    }
     case WM_DESTROY:
         ShutdownGraphics();
         AppState::Shutdown();
